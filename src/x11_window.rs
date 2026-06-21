@@ -109,14 +109,6 @@ impl DockWindow {
             PropMode::REPLACE, win, state, atom_t, &[sticky, above],
         )?;
 
-        let strut_atom = *atoms.get("_NET_WM_STRUT_PARTIAL").unwrap();
-        let w = display_w as u32;
-        let h = dock_height as u32;
-        let strut_data: [u32; 12] = [0, 0, 0, h, 0, 0, 0, 0, 0, 0, 0, w];
-        conn.change_property32(
-            PropMode::REPLACE, win, strut_atom, AtomEnum::CARDINAL, &strut_data,
-        )?;
-
         conn.map_window(win)?;
         conn.flush()?;
 
@@ -132,7 +124,7 @@ impl DockWindow {
             window: win,
             width: display_w,
             height: dock_height,
-            cursor_x: display_w as f64 / 2.0,
+            cursor_x: -10000.0,
             screen_h: display_h,
             screen_w: display_w,
             depth,

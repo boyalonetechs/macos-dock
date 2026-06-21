@@ -14,7 +14,7 @@ use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let theme = MacTheme::new_dark();
-    let dock_height = theme.dock_height;
+    let dock_height = theme.dock_height();
 
     let mut dock = DockWindow::new(dock_height as u16)?;
     dock.set_title("macOS Dock")?;
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut manager = app::AppManager::new();
     let screen_h = dock.screen_h;
 
-    let mut need_resize = false;
+    let mut need_resize = true;
     let mut need_redraw = true;
 
     loop {
@@ -33,14 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     need_redraw = true;
                 }
                 Event::MotionNotify(ev) if ev.event == dock.window => {
-                    dock.cursor_x = ev.root_x as f64;
+                    dock.cursor_x = ev.event_x as f64;
                     need_redraw = true;
                 }
                 Event::LeaveNotify(ev) if ev.event == dock.window => {
-                    dock.cursor_x = dock.width as f64 / 2.0;
-                    for icon in manager.icons.iter_mut() {
-                        icon.zoom = 1.0;
-                    }
+                    dock.cursor_x = -10000.0;
                     need_redraw = true;
                 }
                 Event::ButtonPress(ev) if ev.event == dock.window => {
@@ -85,7 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if !manager.icons.is_empty() {
             let spacing = theme.icon_spacing as f64;
-            let margin = theme.margin;
+            let padding_x = theme.padding_x;
+            let bottom_margin = theme.bottom_margin;
             let mut actual_width = 0.0;
             for icon in &manager.icons {
                 if icon.item_type == app::DockItemType::Separator {
@@ -95,9 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             
-            let dock_w = (actual_width + 2.0 * margin).ceil() as u16;
+            let dock_w = (actual_width + 2.0 * padding_x).ceil() as u16;
             let dock_x = ((dock.screen_w - dock_w) / 2) as i16;
-            let dock_y = (screen_h as i16) - (dock_height as i16);
+            let dock_y = (screen_h as i16) - (dock_height as i16) - bottom_margin as i16;
 
             if need_resize && dock_w != dock.width {
                 dock.configure(dock_x, dock_y, dock_w, dock_height as u16)?;
@@ -107,6 +105,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             need_resize = false;
 
             manager.update_zoom(dock.cursor_x, theme.sigma, theme.max_zoom);
+        }
+
+        let mut zoom_changed = false;
+        for icon in &mut manager.icons {
+            if (icon.zoom - icon.target_zoom).abs() > 0.01 {
+                icon.zoom += (icon.target_zoom - icon.zoom) * 0.3;
+                zoom_changed = true;
+            } else {
+                icon.zoom = icon.target_zoom;
+            }
+        }
+        if zoom_changed {
+            need_redraw = true;
         }
 
         if need_redraw {

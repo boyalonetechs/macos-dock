@@ -16,9 +16,9 @@ pub struct DockIcon {
     pub name: String,
     pub icon_name: String,
     pub is_running: bool,
-    pub is_active: bool,
     pub x: f64,
     pub zoom: f64,
+    pub target_zoom: f64,
     pub entry_index: Option<usize>,
     pub item_type: DockItemType,
 }
@@ -56,9 +56,9 @@ impl AppManager {
             name: String::new(),
             icon_name: String::new(),
             is_running: false,
-            is_active: false,
             x: 0.0,
             zoom: 1.0,
+            target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Separator,
         });
@@ -69,9 +69,9 @@ impl AppManager {
             name: String::new(),
             icon_name: String::new(),
             is_running: false,
-            is_active: false,
             x: 0.0,
             zoom: 1.0,
+            target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Separator,
         });
@@ -80,9 +80,9 @@ impl AppManager {
             name: "Downloads".to_string(),
             icon_name: "folder-download".to_string(),
             is_running: false,
-            is_active: false,
             x: 0.0,
             zoom: 1.0,
+            target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Folder,
         });
@@ -91,9 +91,9 @@ impl AppManager {
             name: "Trash".to_string(),
             icon_name: "user-trash".to_string(),
             is_running: false,
-            is_active: false,
             x: 0.0,
             zoom: 1.0,
+            target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Trash,
         });
@@ -104,9 +104,9 @@ impl AppManager {
             name: name.to_string(),
             icon_name: default_icon.to_string(),
             is_running: false,
-            is_active: false,
             x: 0.0,
             zoom: 1.0,
+            target_zoom: 1.0,
             entry_index: entry_idx,
             item_type: DockItemType::PinnedApp,
         });
@@ -170,9 +170,9 @@ impl AppManager {
                         name,
                         icon_name,
                         is_running: true,
-                        is_active: false,
                         x: 0.0,
                         zoom: 1.0,
+                        target_zoom: 1.0,
                         entry_index: Some(idx),
                         item_type: DockItemType::RunningApp,
                     });
@@ -196,9 +196,9 @@ impl AppManager {
             name: String::new(),
             icon_name: String::new(),
             is_running: false,
-            is_active: false,
             x: 0.0,
             zoom: 1.0,
+            target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Separator,
         });
@@ -213,9 +213,9 @@ impl AppManager {
             name: String::new(),
             icon_name: String::new(),
             is_running: false,
-            is_active: false,
             x: 0.0,
             zoom: 1.0,
+            target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Separator,
         });
@@ -273,11 +273,11 @@ impl AppManager {
     pub fn update_zoom(&mut self, cursor_x: f64, sigma: f64, max_zoom: f64) {
         for icon in self.icons.iter_mut() {
             if icon.item_type == DockItemType::Separator {
-                icon.zoom = 1.0;
+                icon.target_zoom = 1.0;
                 continue;
             }
             let dist = (icon.x - cursor_x).abs();
-            icon.zoom = 1.0 + (max_zoom - 1.0) * (-(dist * dist) / (2.0 * sigma * sigma)).exp();
+            icon.target_zoom = 1.0 + (max_zoom - 1.0) * (-(dist * dist) / (2.0 * sigma * sigma)).exp();
         }
     }
 }

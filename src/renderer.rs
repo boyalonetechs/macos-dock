@@ -35,20 +35,19 @@ impl Renderer {
 
     fn draw_background(&self, ctx: &Context, theme: &MacTheme) {
         let r = theme.corner_radius;
-        let m = theme.margin;
         let w = self.width as f64;
         let h = self.height as f64;
 
         ctx.new_path();
-        ctx.move_to(m + r, m);
-        ctx.line_to(w - m - r, m);
-        ctx.arc(w - m - r, m + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
-        ctx.line_to(w - m, h - m - r);
-        ctx.arc(w - m - r, h - m - r, r, 0.0, std::f64::consts::FRAC_PI_2);
-        ctx.line_to(m + r, h - m);
-        ctx.arc(m + r, h - m - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
-        ctx.line_to(m, m + r);
-        ctx.arc(m + r, m + r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+        ctx.move_to(r, 0.0);
+        ctx.line_to(w - r, 0.0);
+        ctx.arc(w - r, r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+        ctx.line_to(w, h - r);
+        ctx.arc(w - r, h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
+        ctx.line_to(r, h);
+        ctx.arc(r, h - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+        ctx.line_to(0.0, r);
+        ctx.arc(r, r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
         ctx.close_path();
 
         let pat = cairo::LinearGradient::new(0.0, 0.0, 0.0, h);
@@ -63,23 +62,16 @@ impl Renderer {
         ctx.set_source_rgba(sr, sg, sb, sa);
         ctx.set_line_width(1.0);
         ctx.new_path();
-        ctx.move_to(m + r, m);
-        ctx.line_to(w - m - r, m);
-        ctx.arc(w - m - r, m + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
-        ctx.line_to(w - m, h - m - r);
-        ctx.arc(w - m - r, h - m - r, r, 0.0, std::f64::consts::FRAC_PI_2);
-        ctx.line_to(m + r, h - m);
-        ctx.arc(m + r, h - m - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
-        ctx.line_to(m, m + r);
-        ctx.arc(m + r, m + r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
-        ctx.stroke().ok();
-
-        let (sr, sg, sb, sa) = theme.stroke_inner;
-        ctx.set_source_rgba(sr, sg, sb, sa);
-        ctx.set_line_width(0.5);
-        ctx.new_path();
-        ctx.move_to(m + r, m + 1.0);
-        ctx.line_to(w - m - r, m + 1.0);
+        ctx.move_to(r, 0.0);
+        ctx.line_to(w - r, 0.0);
+        ctx.arc(w - r, r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+        ctx.line_to(w, h - r);
+        ctx.arc(w - r, h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
+        ctx.line_to(r, h);
+        ctx.arc(r, h - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+        ctx.line_to(0.0, r);
+        ctx.arc(r, r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+        ctx.close_path();
         ctx.stroke().ok();
     }
 
