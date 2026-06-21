@@ -10,18 +10,25 @@ use theme::MacTheme;
 use x11_window::DockWindow;
 use popup::ResizerPopup;
 use x11rb::protocol::Event;
+use x11rb::protocol::xproto::Rectangle;
 
 use std::thread;
 use std::time::Duration;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut theme = MacTheme::new_dark();
-    let dock_height = theme.dock_height();
+fn headroom(theme: &MacTheme) -> i32 {
+    ((0.7 * theme.icon_size as f64 * (theme.max_zoom - 1.0)) + theme.padding_y).ceil() as i32
+}
 
-    let mut dock = DockWindow::new(dock_height as u16)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // FIX 1: was new_dark(), renamed to new_liquid_glass()
+    let mut theme = MacTheme::new_liquid_glass();
+    let zoom_headroom = headroom(&theme);
+    let full_height = theme.dock_height() + zoom_headroom;
+
+    let mut dock = DockWindow::new(full_height as u16)?;
     dock.set_title("macOS Dock")?;
 
-    let mut renderer = Renderer::new(dock.width as i32, dock.height as i32);
+    let mut renderer = Renderer::new(dock.width as i32, full_height);
     let mut manager = app::AppManager::new();
     let screen_h = dock.screen_h;
 
@@ -124,10 +131,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if !manager.icons.is_empty() {
             let spacing = theme.icon_spacing as f64;
-            let padding_x = theme.padding_x;
+            // FIX 2: explicit f64 annotation so .ceil() resolves without ambiguity
+            let padding_x: f64 = theme.padding_x;
             let bottom_margin = theme.bottom_margin;
-            let dock_height = theme.dock_height();
-            let mut actual_width = 0.0;
+            let zoom_headroom = headroom(&theme);
+            let bg_height = theme.dock_height();
+            let full_height = bg_height + zoom_headroom;
+            let mut actual_width: f64 = 0.0;
             for icon in &manager.icons {
                 if icon.item_type == app::DockItemType::Separator {
                     actual_width += spacing * 0.5;
@@ -138,12 +148,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let dock_w = (actual_width + 2.0 * padding_x).ceil() as u16;
             let dock_x = ((dock.screen_w - dock_w) / 2) as i16;
-            let dock_y = (screen_h as i16) - (dock_height as i16) - bottom_margin as i16;
+            let dock_y = (screen_h as i16) - (full_height as i16) - bottom_margin as i16;
 
-            if need_resize && dock_w != dock.width {
-                dock.configure(dock_x, dock_y, dock_w, dock_height as u16)?;
+            if need_resize && (dock_w != dock.width || full_height != dock.height as i32) {
+                dock.configure(dock_x, dock_y, dock_w, full_height as u16)?;
                 dock.width = dock_w;
-                dock.height = dock_height as u16;
+                dock.height = full_height as u16;
+                // Set input shape so only the background area accepts clicks
+                dock.set_input_shape(&Rectangle {
+                    x: 0,
+                    y: zoom_headroom as i16,
+                    width: dock_w,
+                    height: bg_height as u16,
+                });
                 need_redraw = true;
             }
             need_resize = false;
@@ -166,11 +183,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if need_redraw {
-            let dh = theme.dock_height();
-            renderer.resize(dock.width as i32, dh);
-            renderer.render(&theme, &mut manager);
-            let pixels = renderer.copy_data();
-            let _ = dock.push_pixels(&pixels, dock.width, dh as u16, renderer.stride());
+            let zh = headroom(&theme);
+            let fh = theme.dock_height() + zh;
+            renderer.resize(dock.width as i32, fh, zh);
+            let (pixels, stride) = renderer.render(&theme, &mut manager);
+            let _ = dock.push_pixels(&pixels, dock.width, fh as u16, stride);
             need_redraw = false;
         }
 

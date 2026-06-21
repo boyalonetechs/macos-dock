@@ -1,10 +1,12 @@
 use std::collections::HashMap;
-use x11rb::connection::Connection;
+use x11rb::connection::{Connection, RequestConnection};
 use x11rb::protocol::xproto::*;
+use x11rb::protocol::xproto::ClipOrdering;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::errors::{ReplyError, ConnectionError};
+use x11rb::protocol::shape::{self, ConnectionExt as _, SO, SK};
 
 pub struct DockWindow {
     pub conn: RustConnection,
@@ -19,6 +21,7 @@ pub struct DockWindow {
     pub visual: Visualid,
     pub colormap: Colormap,
     atoms: HashMap<String, Atom>,
+    shape_available: bool,
 }
 
 fn find_argb_visual(conn: &RustConnection, screen: usize) -> Option<(Visualid, u8)> {
@@ -120,6 +123,30 @@ impl DockWindow {
         )?;
         conn.flush()?;
 
+        // Check if the shape extension is available
+        let shape_available = conn
+            .extension_information(shape::X11_EXTENSION_NAME)
+            .ok()
+            .flatten()
+            .is_some();
+
+        // Set initial input shape to the full window
+        if shape_available {
+            let full_rect = Rectangle {
+                x: 0, y: 0,
+                width: display_w,
+                height: dock_height,
+            };
+            let _ = conn.shape_rectangles(
+                SO::SET,
+                SK::INPUT,
+                ClipOrdering::UNSORTED,
+                win,
+                0, 0,
+                &[full_rect],
+            );
+        }
+
         Ok(Self {
             conn,
             root,
@@ -133,6 +160,7 @@ impl DockWindow {
             visual,
             colormap,
             atoms,
+            shape_available,
         })
     }
 
@@ -235,6 +263,19 @@ impl DockWindow {
         } else {
             None
         }
+    }
+
+    pub fn set_input_shape(&self, rect: &Rectangle) {
+        if !self.shape_available { return; }
+        let _ = self.conn.shape_rectangles(
+            SO::SET,
+            SK::INPUT,
+            ClipOrdering::UNSORTED,
+            self.window,
+            0, 0,
+            &[*rect],
+        );
+        let _ = self.conn.flush();
     }
 
     pub fn next_event(&self) -> Result<Option<Event>, ConnectionError> {
