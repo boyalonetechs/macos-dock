@@ -1,0 +1,11 @@
+[package]
+name = "macos-dock"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+cairo-rs = "0.19"
+image = "0.25"
+resvg = { version = "0.44", default-features = false, features = ["raster-images", "text"] }
+usvg = "0.44"
