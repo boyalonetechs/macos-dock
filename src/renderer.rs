@@ -31,7 +31,7 @@ impl Renderer {
             .expect("Failed to create render surface");
         let ctx = Context::new(&surf).expect("Failed to create cairo context");
 
-        // Start fully transparent — compositor sees through and applies blur
+        // Wipe to fully transparent — compositor sees through and applies blur
         ctx.set_operator(cairo::Operator::Clear);
         ctx.paint().ok();
         ctx.set_operator(cairo::Operator::Over);
@@ -46,57 +46,55 @@ impl Renderer {
     }
 
     // -----------------------------------------------------------------------
-    // Liquid-glass pill background
+    // Liquid-glass pill
     // -----------------------------------------------------------------------
     fn draw_background(&self, ctx: &Context, theme: &MacTheme) {
         ctx.save().ok();
 
+        // y0 = top of the pill (below the transparent headroom band)
         let y0   = self.zoom_headroom as f64;
         let w    = self.width as f64;
         let bg_h = (self.height - self.zoom_headroom) as f64;
-        let r    = theme.corner_radius;
+        let r    = theme.corner_radius.min(bg_h / 2.0).min(w / 2.0);
 
-        // Reusable closure: traces the pill path
+        // ── Pill path helper ───────────────────────────────────────────────
         let pill = |ctx: &Context| {
             ctx.new_path();
             ctx.move_to(r, y0);
             ctx.line_to(w - r, y0);
             ctx.arc(w - r, y0 + r,        r,  -std::f64::consts::FRAC_PI_2, 0.0);
             ctx.line_to(w, y0 + bg_h - r);
-            ctx.arc(w - r, y0 + bg_h - r, r,   0.0, std::f64::consts::FRAC_PI_2);
+            ctx.arc(w - r, y0 + bg_h - r, r,   0.0,                         std::f64::consts::FRAC_PI_2);
             ctx.line_to(r, y0 + bg_h);
             ctx.arc(r,     y0 + bg_h - r, r,   std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
             ctx.line_to(0.0, y0 + r);
-            ctx.arc(r,     y0 + r,        r,   std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+            ctx.arc(r,     y0 + r,        r,   std::f64::consts::PI,        3.0 * std::f64::consts::FRAC_PI_2);
             ctx.close_path();
         };
 
-        // 1. ── Glass body fill ─────────────────────────────────────────────
-        //    Pure white, near-zero opacity. The compositor blur does the heavy
-        //    lifting; this just gives the pill a whisper of white so it reads
-        //    against any wallpaper when blur is enabled.
+        // ── 1. Glass body fill ─────────────────────────────────────────────
+        // Near-zero white opacity — compositor blur provides the visual fill.
         let body = cairo::LinearGradient::new(0.0, y0, 0.0, y0 + bg_h);
         let (r1, g1, b1, a1) = theme.bg_top;
         let (r2, g2, b2, a2) = theme.bg_bottom;
-        body.add_color_stop_rgba(0.0,  r1, g1, b1, a1);
-        body.add_color_stop_rgba(1.0,  r2, g2, b2, a2);
+        body.add_color_stop_rgba(0.0, r1, g1, b1, a1);
+        body.add_color_stop_rgba(1.0, r2, g2, b2, a2);
         pill(ctx);
         ctx.set_source(&body).ok();
         ctx.fill().ok();
 
-        // 2. ── Top specular gloss ──────────────────────────────────────────
-        //    A bright white highlight on the upper ~30% of the pill height.
-        //    This is the key "liquid glass" cue — it mimics refracted light
-        //    bending over the curved top surface of thick glass.
-        let gloss_h = bg_h * 0.30;
+        // ── 2. Top specular gloss ──────────────────────────────────────────
+        // Bright white highlight on the upper ~28% of the pill — the key
+        // liquid-glass cue: refracted light bending over the curved top rim.
+        let gloss_h = bg_h * 0.28;
         let gloss = cairo::LinearGradient::new(0.0, y0, 0.0, y0 + gloss_h);
         let (gr1, gg1, gb1, ga1) = theme.gloss_top;
         let (gr2, gg2, gb2, ga2) = theme.gloss_bottom;
         gloss.add_color_stop_rgba(0.0,  gr1, gg1, gb1, ga1);
-        gloss.add_color_stop_rgba(0.55, gr1, gg1, gb1, ga1 * 0.15);
+        gloss.add_color_stop_rgba(0.6,  gr1, gg1, gb1, ga1 * 0.10);
         gloss.add_color_stop_rgba(1.0,  gr2, gg2, gb2, ga2);
 
-        // Clip the gloss to just the top portion of the pill
+        // Clip gloss to pill shape so it doesn't bleed past the rounded corners
         pill(ctx);
         ctx.clip();
         ctx.rectangle(0.0, y0, w, gloss_h);
@@ -104,31 +102,31 @@ impl Renderer {
         ctx.fill().ok();
         ctx.reset_clip();
 
-        // 3. ── Outer stroke ────────────────────────────────────────────────
-        //    Single-pixel white border traces the entire pill outline.
+        // ── 3. Outer stroke ────────────────────────────────────────────────
         let (sr, sg, sb, sa) = theme.stroke_outer;
         ctx.set_source_rgba(sr, sg, sb, sa);
         ctx.set_line_width(1.0);
         pill(ctx);
         ctx.stroke().ok();
 
-        // 4. ── Inner bottom-edge stroke ────────────────────────────────────
-        //    A very subtle inset line on the lower half gives the illusion of
-        //    glass thickness / depth (the bottom face of the glass catching
-        //    reflected light differently from the top).
-        //    We draw it 1px inside the outer stroke on the bottom arc only.
+        // ── 4. Inner bottom-edge stroke ────────────────────────────────────
+        // A faint inset arc along the bottom half — mimics the bottom face of
+        // a thick piece of glass catching different reflected light.
         {
             let inset = 1.5_f64;
             let (ir, ig, ib, ia) = theme.stroke_inner;
             ctx.set_source_rgba(ir, ig, ib, ia);
             ctx.set_line_width(1.0);
             ctx.new_path();
-            // Bottom arc only: from left corner to right corner of the lower half
-            ctx.arc(w - r, y0 + bg_h - r, r - inset,
-                    0.0, std::f64::consts::FRAC_PI_2);
+            ctx.arc(
+                w - r, y0 + bg_h - r, r - inset,
+                0.0, std::f64::consts::FRAC_PI_2,
+            );
             ctx.line_to(r, y0 + bg_h - inset);
-            ctx.arc(r, y0 + bg_h - r, r - inset,
-                    std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+            ctx.arc(
+                r, y0 + bg_h - r, r - inset,
+                std::f64::consts::FRAC_PI_2, std::f64::consts::PI,
+            );
             ctx.stroke().ok();
         }
 
@@ -149,7 +147,7 @@ impl Renderer {
         let headroom  = self.zoom_headroom as f64;
         let padding_x = theme.padding_x;
 
-        // Total content width
+        // Compute content width (same formula as compute_dock_width in main.rs)
         let mut content_width = -edge_gap;
         for icon in &manager.icons {
             if icon.item_type == DockItemType::Separator {
@@ -159,14 +157,15 @@ impl Renderer {
             }
         }
 
-        // Centre within dock, honouring horizontal padding
+        // Centre icon strip within the dock width, honouring padding_x
         let start_x = padding_x
             + (self.width as f64 - padding_x * 2.0 - content_width) / 2.0;
+
         let padding_top = theme.padding_top();
 
         manager.set_icon_positions(start_x, icon_size, edge_gap, sep_width);
 
-        // Load at hi-res for sharp rendering at all zoom levels
+        // Load icons at hi-res so they stay crisp at all zoom levels
         let hi_res = (icon_size * max_zoom).ceil() as i32;
         let mut surfaces = Vec::new();
         for i in 0..icon_count {
@@ -174,7 +173,7 @@ impl Renderer {
         }
 
         for (i, icon) in manager.icons.iter().enumerate() {
-            // ── Separator ──
+            // ── Separator ──────────────────────────────────────────────────
             if icon.item_type == DockItemType::Separator {
                 let cx = icon.x;
                 let cy = headroom + padding_top + icon_size / 2.0;
@@ -189,19 +188,21 @@ impl Renderer {
                 continue;
             }
 
-            // ── Icon ──
+            // ── Icon ───────────────────────────────────────────────────────
             let zoom    = icon.zoom;
             let cx      = icon.x;
-            // floor_y = bottom of icon slot at zoom 1
+            // floor_y = bottom of the icon slot at zoom=1
             let floor_y = headroom + padding_top + icon_size;
 
             if let Some(ref surf) = surfaces[i] {
                 let (sw, sh) = (surf.width() as f64, surf.height() as f64);
                 ctx.save().ok();
 
-                // Icons grow upward from the floor (bottom-anchored zoom)
+                // Bottom-anchored zoom: icons grow upward from the dock floor
                 let lift = (zoom - 1.0) * icon_size * 0.5;
                 ctx.translate(cx, floor_y - lift);
+
+                // Scale from hi-res down to the target display size
                 ctx.scale(zoom / max_zoom, zoom / max_zoom);
 
                 ctx.set_source_surface(surf, -sw / 2.0, -sh).ok();
@@ -211,7 +212,7 @@ impl Renderer {
                 ctx.restore().ok();
             }
 
-            // ── Running-app dot ──
+            // ── Running-app dot ────────────────────────────────────────────
             if icon.is_running {
                 let (dr, dg, db, da) = theme.active_dot_color;
                 ctx.set_source_rgba(dr, dg, db, da);
