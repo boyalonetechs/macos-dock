@@ -80,21 +80,22 @@ impl Renderer {
         if icon_count == 0 { return; }
 
         let icon_size = theme.icon_size as f64;
-        let spacing = theme.icon_spacing as f64;
+        let edge_gap = (theme.icon_spacing - theme.icon_size) as f64;
+        let sep_width = 16.0;
 
-        let mut actual_width = 0.0;
+        let mut total_width = -edge_gap;
         for icon in &manager.icons {
             if icon.item_type == DockItemType::Separator {
-                actual_width += spacing * 0.5;
+                total_width += sep_width + edge_gap;
             } else {
-                actual_width += spacing;
+                total_width += icon_size * icon.zoom + edge_gap;
             }
         }
-        
-        let start_x = (self.width as f64 - actual_width) / 2.0;
+
+        let start_x = (self.width as f64 - total_width) / 2.0;
         let padding_top = theme.padding_top();
 
-        manager.set_icon_positions(start_x, spacing, icon_size);
+        manager.set_icon_positions(start_x, icon_size, edge_gap, sep_width);
 
         let mut surfaces = Vec::new();
         for i in 0..icon_count {
@@ -117,37 +118,29 @@ impl Renderer {
             }
 
             let zoom = icon.zoom;
-            let display_size = (icon_size * zoom).round() as i32;
-            if display_size < 4 { continue; }
-
             let cx = icon.x;
-            let cy = padding_top + icon_size / 2.0;
-            let draw_x = (cx - display_size as f64 / 2.0).round();
-            let draw_y = (cy - display_size as f64 / 2.0).round();
+            let floor_y = padding_top + icon_size;
 
             if let Some(ref surf) = surfaces[i] {
-                let (sw, sh) = (surf.width(), surf.height());
+                let (sw, sh) = (surf.width() as f64, surf.height() as f64);
                 ctx.save().ok();
 
-                if (display_size as f64 / icon_size - 1.0).abs() > 0.01 {
-                    ctx.translate(cx, cy);
-                    ctx.scale(zoom, zoom);
-                    ctx.translate(-cx, -cy);
-                }
-
-                ctx.set_source_surface(surf, draw_x, draw_y).ok();
-                ctx.rectangle(draw_x.max(0.0), draw_y.max(0.0), sw as f64, sh as f64);
+                let lift = (zoom - 1.0) * icon_size * 0.3;
+                let base_y = floor_y + lift;
+                ctx.translate(cx, base_y);
+                ctx.scale(zoom, zoom);
+                ctx.set_source_surface(surf, -sw / 2.0, -sh).ok();
+                ctx.rectangle(-sw / 2.0, -sh, sw, sh);
                 ctx.fill().ok();
 
                 ctx.restore().ok();
             }
 
             if icon.is_running {
-                let dot_y = padding_top + icon_size + 4.0;
                 let (dr, dg, db, da) = theme.active_dot_color;
                 ctx.set_source_rgba(dr, dg, db, da);
                 ctx.new_path();
-                ctx.arc(cx, dot_y, 3.0, 0.0, 2.0 * std::f64::consts::PI);
+                ctx.arc(cx, floor_y + 5.0, 3.5, 0.0, 2.0 * std::f64::consts::PI);
                 ctx.fill().ok();
             }
         }

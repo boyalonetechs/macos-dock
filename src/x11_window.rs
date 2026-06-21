@@ -15,7 +15,9 @@ pub struct DockWindow {
     pub cursor_x: f64,
     pub screen_h: u16,
     pub screen_w: u16,
-    depth: u8,
+    pub depth: u8,
+    pub visual: Visualid,
+    pub colormap: Colormap,
     atoms: HashMap<String, Atom>,
 }
 
@@ -128,6 +130,8 @@ impl DockWindow {
             screen_h: display_h,
             screen_w: display_w,
             depth,
+            visual,
+            colormap,
             atoms,
         })
     }

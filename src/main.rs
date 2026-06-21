@@ -3,17 +3,19 @@ mod renderer;
 mod x11_window;
 mod app;
 mod desktop;
+mod popup;
 
 use renderer::Renderer;
 use theme::MacTheme;
 use x11_window::DockWindow;
+use popup::ResizerPopup;
 use x11rb::protocol::Event;
 
 use std::thread;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let theme = MacTheme::new_dark();
+    let mut theme = MacTheme::new_dark();
     let dock_height = theme.dock_height();
 
     let mut dock = DockWindow::new(dock_height as u16)?;
@@ -23,11 +25,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut manager = app::AppManager::new();
     let screen_h = dock.screen_h;
 
+    // Create the resizer popup (shares the same connection via the dock)
+    let mut popup = ResizerPopup::new(
+        &dock.conn,
+        dock.root,
+        dock.visual,
+        dock.depth,
+        dock.colormap,
+        theme.icon_size as f64,
+    )?;
+
     let mut need_resize = true;
     let mut need_redraw = true;
 
     loop {
         while let Some(event) = dock.next_event()? {
+            // Let popup handle its own events first
+            if popup.visible {
+                if popup.should_hide(&event) {
+                    popup.hide(&dock.conn)?;
+                    continue;
+                }
+                if popup.handle_event(&event) {
+                    // Update theme with new icon size from slider
+                    let new_size = popup.icon_size.round() as i32;
+                    if new_size != theme.icon_size {
+                        theme.icon_size = new_size;
+                        theme.icon_spacing = new_size + 10;
+                        need_resize = true;
+                        need_redraw = true;
+                    }
+                    popup.render(&dock.conn)?;
+                    continue;
+                }
+            }
+
             match event {
                 Event::Expose(ev) if ev.window == dock.window => {
                     need_redraw = true;
@@ -42,11 +74,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Event::ButtonPress(ev) if ev.event == dock.window => {
                     let click_x = ev.event_x as f64;
+                    let mut hit_icon = false;
+
                     for icon in &manager.icons {
                         let w = theme.icon_size as f64 * icon.zoom;
                         if click_x >= icon.x - w/2.0 && click_x <= icon.x + w/2.0 {
                             if icon.item_type == app::DockItemType::Separator { continue; }
-                            
+                            hit_icon = true;
+
                             if icon.item_type == app::DockItemType::Folder && icon.name == "Downloads" {
                                 let home = std::env::var("HOME").unwrap_or_default();
                                 let _ = std::process::Command::new("xdg-open").arg(format!("{}/Downloads", home)).spawn();
@@ -64,6 +99,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             break;
                         }
+                    }
+
+                    // If clicked empty space on dock, show the resizer popup
+                    if !hit_icon {
+                        popup.icon_size = theme.icon_size as f64;
+                        popup.show(&dock.conn, ev.root_x, ev.root_y)?;
+                        popup.render(&dock.conn)?;
                     }
                 }
                 _ => {}
@@ -84,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let spacing = theme.icon_spacing as f64;
             let padding_x = theme.padding_x;
             let bottom_margin = theme.bottom_margin;
+            let dock_height = theme.dock_height();
             let mut actual_width = 0.0;
             for icon in &manager.icons {
                 if icon.item_type == app::DockItemType::Separator {
@@ -92,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     actual_width += spacing;
                 }
             }
-            
+
             let dock_w = (actual_width + 2.0 * padding_x).ceil() as u16;
             let dock_x = ((dock.screen_w - dock_w) / 2) as i16;
             let dock_y = (screen_h as i16) - (dock_height as i16) - bottom_margin as i16;
@@ -100,6 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if need_resize && dock_w != dock.width {
                 dock.configure(dock_x, dock_y, dock_w, dock_height as u16)?;
                 dock.width = dock_w;
+                dock.height = dock_height as u16;
                 need_redraw = true;
             }
             need_resize = false;
@@ -107,10 +151,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             manager.update_zoom(dock.cursor_x, theme.sigma, theme.max_zoom);
         }
 
+        // Smooth interpolation for zoom animation
         let mut zoom_changed = false;
         for icon in &mut manager.icons {
-            if (icon.zoom - icon.target_zoom).abs() > 0.01 {
-                icon.zoom += (icon.target_zoom - icon.zoom) * 0.3;
+            if (icon.zoom - icon.target_zoom).abs() > 0.005 {
+                icon.zoom += (icon.target_zoom - icon.zoom) * 0.25;
                 zoom_changed = true;
             } else {
                 icon.zoom = icon.target_zoom;
@@ -121,10 +166,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if need_redraw {
-            renderer.resize(dock.width as i32, dock.height as i32);
+            let dh = theme.dock_height();
+            renderer.resize(dock.width as i32, dh);
             renderer.render(&theme, &mut manager);
             let pixels = renderer.copy_data();
-            let _ = dock.push_pixels(&pixels, dock.width, dock.height, renderer.stride());
+            let _ = dock.push_pixels(&pixels, dock.width, dh as u16, renderer.stride());
             need_redraw = false;
         }
 

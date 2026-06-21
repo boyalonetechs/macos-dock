@@ -7,6 +7,7 @@ pub struct DesktopEntry {
     pub name: String,
     pub icon_name: String,
     pub filename: String,
+    pub startup_wm_class: Option<String>,
 }
 
 pub struct IconCache {
@@ -56,6 +57,7 @@ pub fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
     let content = fs::read_to_string(path).ok()?;
     let mut name = None;
     let mut icon_name = None;
+    let mut startup_wm_class = None;
     let mut in_desktop = false;
 
     for line in content.lines() {
@@ -74,6 +76,8 @@ pub fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
             name = Some(val.to_string());
         } else if let Some(val) = line.strip_prefix("Icon=") {
             icon_name = Some(val.to_string());
+        } else if let Some(val) = line.strip_prefix("StartupWMClass=") {
+            startup_wm_class = Some(val.to_string());
         } else if line.starts_with("Name[") {
             if name.is_none() {
                 if let Some(val) = line.split('=').nth(1) {
@@ -88,20 +92,39 @@ pub fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
         name: name.unwrap_or_else(|| filename.clone()),
         icon_name: icon_name.unwrap_or_else(|| filename.clone()),
         filename,
+        startup_wm_class,
     })
 }
 
 fn search_icon_dirs(icon_name: &str, size: i32) -> Option<PathBuf> {
-    let icon_dirs = [
-        format!("{}/.local/share/icons/WhiteSur/apps/scalable", std::env::var("HOME").ok()?),
-        format!("{}/.local/share/icons/WhiteSur/apps/{}", std::env::var("HOME").ok()?, size),
-        format!("{}/.local/share/icons/hicolor/{}/apps", std::env::var("HOME").ok()?, size),
-        format!("/usr/share/icons/hicolor/{}/apps", size),
-        format!("/usr/share/icons/hicolor/scalable/apps"),
-        format!("/usr/share/pixmaps"),
-    ];
+    let home = std::env::var("HOME").ok()?;
+    let themes = ["WhiteSur", "WhiteSur-dark", "WhiteSur-light"];
+    let categories = ["apps", "places", "mimetypes", "devices"];
+    let sub_dirs = ["scalable", &format!("{}", size), "48", "64", "128", "256"];
 
-    for dir in &icon_dirs {
+    let mut dirs = Vec::new();
+
+    // User icon themes (prioritize WhiteSur)
+    for theme in &themes {
+        for cat in &categories {
+            for sub in &sub_dirs {
+                dirs.push(format!("{}/.local/share/icons/{}/{}/{}", home, theme, cat, sub));
+            }
+        }
+    }
+
+    // System icon themes
+    for sub in &sub_dirs {
+        for cat in &categories {
+            dirs.push(format!("{}/.local/share/icons/hicolor/{}/{}", home, sub, cat));
+            dirs.push(format!("/usr/share/icons/hicolor/{}/{}", sub, cat));
+            dirs.push(format!("/usr/share/icons/Adwaita/{}/{}", sub, cat));
+        }
+    }
+
+    dirs.push(format!("/usr/share/pixmaps"));
+
+    for dir in &dirs {
         let p = Path::new(dir);
         for ext in &["svg", "png", "xpm"] {
             let candidate = p.join(format!("{}.{}", icon_name, ext));
@@ -220,16 +243,41 @@ fn render_png_to_surface(path: &Path, size: i32) -> Option<ImageSurface> {
 
 pub fn match_desktop_to_class<'a>(class: &'a str, entries: &'a [DesktopEntry]) -> Option<&'a DesktopEntry> {
     let class_lower = class.to_lowercase();
+
+    // 1. Exact match on StartupWMClass (highest priority)
+    for entry in entries {
+        if let Some(ref wm_class) = entry.startup_wm_class {
+            if wm_class.to_lowercase() == class_lower {
+                return Some(entry);
+            }
+        }
+    }
+
+    // 2. Exact match on filename
     for entry in entries {
         if entry.filename == class_lower {
             return Some(entry);
         }
     }
+
+    // 3. Partial match on StartupWMClass
+    for entry in entries {
+        if let Some(ref wm_class) = entry.startup_wm_class {
+            let wm_lower = wm_class.to_lowercase();
+            if wm_lower.contains(&class_lower) || class_lower.contains(&wm_lower) {
+                return Some(entry);
+            }
+        }
+    }
+
+    // 4. Partial match on filename
     for entry in entries {
         if entry.filename.contains(&class_lower) || class_lower.contains(&entry.filename) {
             return Some(entry);
         }
     }
+
+    // 5. Partial match on name
     for entry in entries {
         if entry.name.to_lowercase().contains(&class_lower) || class_lower.contains(&entry.name.to_lowercase()) {
             return Some(entry);

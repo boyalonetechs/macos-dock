@@ -257,15 +257,17 @@ impl AppManager {
         }
     }
 
-    pub fn set_icon_positions(&mut self, start_x: f64, spacing: f64, icon_size: f64) {
-        let mut current_x = start_x + icon_size / 2.0;
+    pub fn set_icon_positions(&mut self, start_x: f64, icon_size: f64, edge_gap: f64, sep_width: f64) {
+        let mut current_x = start_x;
         for icon in self.icons.iter_mut() {
             if icon.item_type == DockItemType::Separator {
-                icon.x = current_x - (icon_size - spacing)/2.0; 
-                current_x += spacing * 0.5; // Separators take half spacing
+                icon.x = current_x + sep_width / 2.0;
+                current_x += sep_width + edge_gap;
             } else {
+                let display_w = icon_size * icon.zoom;
+                current_x += display_w / 2.0;
                 icon.x = current_x;
-                current_x += spacing;
+                current_x += display_w / 2.0 + edge_gap;
             }
         }
     }
