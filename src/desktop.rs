@@ -98,13 +98,13 @@ pub fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
 
 fn search_icon_dirs(icon_name: &str, size: i32) -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
-    let themes = ["WhiteSur", "WhiteSur-dark", "WhiteSur-light"];
+    let themes = ["MacTahoe", "MacTahoe-dark", "MacTahoe-light", "WhiteSur", "WhiteSur-dark", "WhiteSur-light"];
     let categories = ["apps", "places", "mimetypes", "devices"];
     let sub_dirs = ["scalable", &format!("{}", size), "48", "64", "128", "256"];
 
     let mut dirs = Vec::new();
 
-    // User icon themes (prioritize WhiteSur)
+    // User icon themes (prioritize MacTahoe, then WhiteSur)
     for theme in &themes {
         for cat in &categories {
             for sub in &sub_dirs {
@@ -185,10 +185,12 @@ fn render_svg_to_surface(path: &Path, size: i32) -> Option<ImageSurface> {
                 let si = ((y * w as i32 + x) * 4) as usize;
                 let di = (y * stride + x * 4) as usize;
                 if si + 3 < data.len() && di + 3 < surf_data.len() {
-                    surf_data[di] = data[si + 3];
-                    surf_data[di + 1] = data[si + 2];
-                    surf_data[di + 2] = data[si + 1];
-                    surf_data[di + 3] = data[si];
+                    // Source: premultiplied RGBA [R, G, B, A]
+                    // Cairo ARGB32 LE:  [B, G, R, A] (premultiplied)
+                    surf_data[di]     = data[si + 2]; // B
+                    surf_data[di + 1] = data[si + 1]; // G
+                    surf_data[di + 2] = data[si];     // R
+                    surf_data[di + 3] = data[si + 3]; // A
                 }
             }
         }
@@ -220,10 +222,23 @@ fn render_png_to_surface(path: &Path, size: i32) -> Option<ImageSurface> {
             let si = ((y * new_w + x) * 4) as usize;
             let di = (y * stride + x * 4) as usize;
             if si + 3 < data.len() && di + 3 < len {
-                argb[di] = data[si + 3];
-                argb[di + 1] = data[si + 2];
-                argb[di + 2] = data[si + 1];
-                argb[di + 3] = data[si];
+                let r = data[si];
+                let g = data[si + 1];
+                let b = data[si + 2];
+                let a = data[si + 3];
+                // Source: non-premultiplied RGBA
+                // Cairo ARGB32 LE: [B, G, R, A] with premultiplied alpha
+                if a > 0 {
+                    argb[di]     = (b as u16 * a as u16 / 255) as u8;
+                    argb[di + 1] = (g as u16 * a as u16 / 255) as u8;
+                    argb[di + 2] = (r as u16 * a as u16 / 255) as u8;
+                    argb[di + 3] = a;
+                } else {
+                    argb[di]     = 0;
+                    argb[di + 1] = 0;
+                    argb[di + 2] = 0;
+                    argb[di + 3] = 0;
+                }
             }
         }
     }
