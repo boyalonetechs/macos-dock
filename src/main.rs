@@ -23,7 +23,8 @@ fn headroom(theme: &MacTheme) -> i32 {
     extra.ceil() as i32
 }
 
-/// Compute exact dock pixel width matching the renderer's layout
+/// Compute exact dock pixel width matching the renderer's layout.
+/// Uses unzoomed icon size so the dock never shakes on hover.
 fn compute_dock_width(theme: &MacTheme, manager: &app::AppManager) -> u16 {
     let edge_gap = (theme.icon_spacing - theme.icon_size) as f64;
     let sep_width = 16.0_f64;
@@ -34,7 +35,7 @@ fn compute_dock_width(theme: &MacTheme, manager: &app::AppManager) -> u16 {
         if icon.item_type == app::DockItemType::Separator {
             content_width += sep_width + edge_gap;
         } else {
-            content_width += theme.icon_size as f64 * icon.zoom + edge_gap;
+            content_width += theme.icon_size as f64 + edge_gap;
         }
     }
     (content_width + 2.0 * padding_x).ceil().max(80.0) as u16
