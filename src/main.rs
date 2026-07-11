@@ -106,45 +106,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let click_x = ev.event_x as f64;
                     let click_y = ev.event_y as f64;
 
-                    // Ignore clicks in the transparent headroom band above the pill
                     if click_y < zoom_headroom as f64 {
                         continue;
                     }
 
-                    let mut hit_icon = false;
-                    for icon in &manager.icons {
-                        let w = theme.icon_size as f64 * icon.zoom;
-                        if click_x >= icon.x - w / 2.0 && click_x <= icon.x + w / 2.0 {
-                            if icon.item_type == app::DockItemType::Separator { continue; }
-                            hit_icon = true;
-
-                            if icon.item_type == app::DockItemType::Folder && icon.name == "Downloads" {
-                                let home = std::env::var("HOME").unwrap_or_default();
-                                let _ = std::process::Command::new("xdg-open")
-                                    .arg(format!("{}/Downloads", home)).spawn();
-                            } else if icon.item_type == app::DockItemType::Trash {
-                                let _ = std::process::Command::new("xdg-open")
-                                    .arg("trash:///").spawn();
-                            } else if let Some(idx) = icon.entry_index {
-                                if let Some(entry) = manager.entries.get(idx) {
-                                    let _ = std::process::Command::new("gtk-launch")
-                                        .arg(&entry.filename).spawn();
+                    match ev.detail {
+                        1 => { // Left click
+                            for icon in &manager.icons {
+                                let w = theme.icon_size as f64 * icon.zoom;
+                                if click_x >= icon.x - w / 2.0 && click_x <= icon.x + w / 2.0 {
+                                    if icon.item_type == app::DockItemType::Separator { continue; }
+                                    if icon.item_type == app::DockItemType::Folder && icon.name == "Downloads" {
+                                        let home = std::env::var("HOME").unwrap_or_default();
+                                        let _ = std::process::Command::new("xdg-open")
+                                            .arg(format!("{}/Downloads", home)).spawn();
+                                    } else if icon.item_type == app::DockItemType::Trash {
+                                        let _ = std::process::Command::new("xdg-open")
+                                            .arg("trash:///").spawn();
+                                    } else if let Some(idx) = icon.entry_index {
+                                        if let Some(entry) = manager.entries.get(idx) {
+                                            let _ = std::process::Command::new("gio")
+                                                .args(["launch", &entry.file_path.to_string_lossy()]).spawn();
+                                        }
+                                    }
+                                    break;
                                 }
-                            } else if icon.name == "Finder" {
-                                let home = std::env::var("HOME").unwrap_or_default();
-                                let _ = std::process::Command::new("xdg-open").arg(&home).spawn();
-                            } else if icon.name == "System Settings" {
-                                let _ = std::process::Command::new("gtk-launch")
-                                    .arg("gnome-control-center").spawn();
                             }
-                            break;
                         }
-                    }
-
-                    if !hit_icon {
-                        popup.icon_size = theme.icon_size as f64;
-                        popup.show(&dock.conn, ev.root_x, ev.root_y)?;
-                        popup.render(&dock.conn)?;
+                        3 => { // Right click
+                            popup.icon_size = theme.icon_size as f64;
+                            popup.show(&dock.conn, ev.root_x, ev.root_y)?;
+                            popup.render(&dock.conn)?;
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -194,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut zoom_changed = false;
         for icon in &mut manager.icons {
             if (icon.zoom - icon.target_zoom).abs() > 0.005 {
-                icon.zoom += (icon.target_zoom - icon.zoom) * 0.25;
+                icon.zoom += (icon.target_zoom - icon.zoom) * 0.45;
                 zoom_changed = true;
             } else {
                 icon.zoom = icon.target_zoom;
@@ -213,6 +207,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             need_redraw = false;
         }
 
-        thread::sleep(Duration::from_millis(16));
+        thread::sleep(Duration::from_millis(12));
     }
 }

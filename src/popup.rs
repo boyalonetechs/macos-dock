@@ -218,6 +218,7 @@ impl ResizerPopup {
         ctx.stroke().ok();
 
         // Push pixels
+        drop(ctx);
         let data = surface.data().map_err(|e| format!("surface data: {}", e))?.to_vec();
         let stride = surface.stride() as usize;
 

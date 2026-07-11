@@ -7,6 +7,7 @@ pub struct DesktopEntry {
     pub name: String,
     pub icon_name: String,
     pub filename: String,
+    pub file_path: PathBuf,
     pub startup_wm_class: Option<String>,
 }
 
@@ -34,17 +35,46 @@ impl IconCache {
 
 pub fn find_desktop_files() -> Vec<DesktopEntry> {
     let mut entries = Vec::new();
-    let dirs = [
-        "/usr/share/applications/",
-        &format!("{}/.local/share/applications/", std::env::var("HOME").unwrap_or_default()),
+    let mut seen = std::collections::HashSet::new();
+    let mut dirs = Vec::new();
+
+    dirs.push("/usr/share/applications/".to_string());
+    dirs.push(format!("{}/.local/share/applications/", std::env::var("HOME").unwrap_or_default()));
+
+    if let Ok(data_dirs) = std::env::var("XDG_DATA_DIRS") {
+        for d in data_dirs.split(':') {
+            let p = format!("{}/applications/", d);
+            if !dirs.contains(&p) {
+                dirs.push(p);
+            }
+        }
+    }
+
+    let flatpak_dirs = [
+        "/var/lib/flatpak/exports/share/applications/",
+        &format!("{}/.local/share/flatpak/exports/share/applications/", std::env::var("HOME").unwrap_or_default()),
     ];
+    for d in &flatpak_dirs {
+        if !dirs.contains(&d.to_string()) {
+            dirs.push(d.to_string());
+        }
+    }
+
+    let snap_dir = "/var/lib/snapd/desktop/applications/";
+    if !dirs.contains(&snap_dir.to_string()) {
+        dirs.push(snap_dir.to_string());
+    }
+
     for dir in &dirs {
         if let Ok(read) = fs::read_dir(dir) {
             for entry in read.flatten() {
                 let path = entry.path();
                 if path.extension().map(|e| e == "desktop").unwrap_or(false) {
-                    if let Some(de) = parse_desktop_file(&path) {
-                        entries.push(de);
+                    let filename = path.file_stem().unwrap_or_default().to_str().unwrap_or_default().to_lowercase();
+                    if seen.insert(filename) {
+                        if let Some(de) = parse_desktop_file(&path) {
+                            entries.push(de);
+                        }
                     }
                 }
             }
@@ -58,6 +88,8 @@ pub fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
     let mut name = None;
     let mut icon_name = None;
     let mut startup_wm_class = None;
+    let mut no_display = false;
+    let mut app_type = String::new();
     let mut in_desktop = false;
 
     for line in content.lines() {
@@ -78,6 +110,10 @@ pub fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
             icon_name = Some(val.to_string());
         } else if let Some(val) = line.strip_prefix("StartupWMClass=") {
             startup_wm_class = Some(val.to_string());
+        } else if let Some(val) = line.strip_prefix("NoDisplay=") {
+            no_display = val == "true";
+        } else if let Some(val) = line.strip_prefix("Type=") {
+            app_type = val.to_string();
         } else if line.starts_with("Name[") {
             if name.is_none() {
                 if let Some(val) = line.split('=').nth(1) {
@@ -87,11 +123,15 @@ pub fn parse_desktop_file(path: &Path) -> Option<DesktopEntry> {
         }
     }
 
+    if no_display { return None; }
+    if !app_type.is_empty() && app_type != "Application" { return None; }
+
     let filename = path.file_stem()?.to_str()?.to_lowercase();
     Some(DesktopEntry {
         name: name.unwrap_or_else(|| filename.clone()),
         icon_name: icon_name.unwrap_or_else(|| filename.clone()),
         filename,
+        file_path: path.to_path_buf(),
         startup_wm_class,
     })
 }
