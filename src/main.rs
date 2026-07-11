@@ -4,11 +4,13 @@ mod x11_window;
 mod app;
 mod desktop;
 mod popup;
+mod appgrid;
 
 use renderer::Renderer;
 use theme::MacTheme;
 use x11_window::DockWindow;
 use popup::ResizerPopup;
+use appgrid::AppGrid;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::Rectangle;
 
@@ -56,6 +58,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut manager = app::AppManager::new();
     let screen_h = dock.screen_h;
 
+    let grid_entries: Vec<desktop::DesktopEntry> = manager.all_entries().to_vec();
+    let mut app_grid = AppGrid::new(
+        &dock.conn,
+        dock.root,
+        dock.visual,
+        dock.depth,
+        dock.colormap,
+        dock.screen_w,
+        dock.screen_h,
+        grid_entries,
+    )?;
+
     let mut popup = ResizerPopup::new(
         &dock.conn,
         dock.root,
@@ -70,6 +84,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         while let Some(event) = dock.next_event()? {
+            // App grid takes priority when visible
+            if app_grid.visible {
+                if app_grid.should_hide(&event) {
+                    app_grid.hide(&dock.conn)?;
+                    continue;
+                }
+                if let Some(file_path) = app_grid.handle_event(&event) {
+                    let _ = std::process::Command::new("gio")
+                        .args(["launch", &file_path]).spawn();
+                    app_grid.hide(&dock.conn)?;
+                    continue;
+                }
+                if matches!(event, Event::Expose(ev) if ev.window == app_grid.window) {
+                    app_grid.render(&dock.conn)?;
+                    continue;
+                }
+            }
+
             if popup.visible {
                 if popup.should_hide(&event) {
                     popup.hide(&dock.conn)?;
@@ -116,6 +148,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let w = theme.icon_size as f64 * icon.zoom;
                                 if click_x >= icon.x - w / 2.0 && click_x <= icon.x + w / 2.0 {
                                     if icon.item_type == app::DockItemType::Separator { continue; }
+                                    if icon.item_type == app::DockItemType::Launcher {
+                                        app_grid.toggle(&dock.conn)?;
+                                        break;
+                                    }
                                     if icon.item_type == app::DockItemType::Folder && icon.name == "Downloads" {
                                         let home = std::env::var("HOME").unwrap_or_default();
                                         let _ = std::process::Command::new("xdg-open")

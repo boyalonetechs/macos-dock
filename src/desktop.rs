@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::fs;
 use cairo::{Context, Format, ImageSurface};
 
+#[derive(Clone)]
 pub struct DesktopEntry {
     pub name: String,
     pub icon_name: String,
@@ -177,7 +178,6 @@ fn search_icon_dirs(icon_name: &str, size: i32) -> Option<PathBuf> {
 }
 
 pub fn load_app_icon(icon_name: &str, size: i32) -> Option<ImageSurface> {
-    let icon_name = icon_name.trim_start_matches('/');
     if icon_name.starts_with('/') || icon_name.starts_with('~') {
         let path = if icon_name.starts_with("~/") {
             let home = std::env::var("HOME").ok()?;

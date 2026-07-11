@@ -4,12 +4,15 @@ use crate::desktop::{DesktopEntry, IconCache};
 
 #[derive(Clone, PartialEq)]
 pub enum DockItemType {
+    Launcher,
     PinnedApp,
     RunningApp,
     Separator,
     Folder,
     Trash,
 }
+
+const MAX_DOCK_ICONS: usize = 25;
 
 #[derive(Clone)]
 pub struct DockIcon {
@@ -46,11 +49,16 @@ impl AppManager {
     }
 
     fn init_pinned_items(&mut self) {
+        // Fixed tail icons: separator + Downloads + Trash = 3
+        let tail_count = 3usize;
+        let max_apps = MAX_DOCK_ICONS.saturating_sub(1 + tail_count); // 1 for launcher
+
         // All installed applications sorted alphabetically
         let mut app_indices: Vec<usize> = (0..self.entries.len()).collect();
         app_indices.sort_by(|&a, &b| self.entries[a].name.to_lowercase().cmp(&self.entries[b].name.to_lowercase()));
 
-        for &idx in &app_indices {
+        let app_count = app_indices.len().min(max_apps);
+        for &idx in &app_indices[..app_count] {
             let name = self.entries[idx].name.clone();
             let icon_name = self.entries[idx].icon_name.clone();
             self.add_pinned(&name, &icon_name, Some(idx));
@@ -90,6 +98,19 @@ impl AppManager {
             entry_index: None,
             item_type: DockItemType::Trash,
         });
+
+        // Launcher icon at the very front (leftmost)
+        let launcher = DockIcon {
+            name: "Launcher".to_string(),
+            icon_name: "view-app-grid".to_string(),
+            is_running: false,
+            x: 0.0,
+            zoom: 1.0,
+            target_zoom: 1.0,
+            entry_index: None,
+            item_type: DockItemType::Launcher,
+        };
+        self.icons.insert(0, launcher);
     }
 
     fn add_pinned(&mut self, name: &str, default_icon: &str, entry_idx: Option<usize>) {
@@ -272,5 +293,9 @@ impl AppManager {
             let dist = (icon.x - cursor_x).abs();
             icon.target_zoom = 1.0 + (max_zoom - 1.0) * (-(dist * dist) / (2.0 * sigma * sigma)).exp();
         }
+    }
+
+    pub fn all_entries(&self) -> &[DesktopEntry] {
+        &self.entries
     }
 }
