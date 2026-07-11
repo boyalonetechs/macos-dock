@@ -46,12 +46,17 @@ impl AppManager {
     }
 
     fn init_pinned_items(&mut self) {
-        // Pinned apps (Left section)
-        self.add_pinned("Finder", "system-file-manager", None);
-        self.add_pinned("Launchpad", "applications-system", None);
-        self.add_pinned("System Settings", "preferences-system", None);
+        // All installed applications sorted alphabetically
+        let mut app_indices: Vec<usize> = (0..self.entries.len()).collect();
+        app_indices.sort_by(|&a, &b| self.entries[a].name.to_lowercase().cmp(&self.entries[b].name.to_lowercase()));
 
-        // Separator 1
+        for &idx in &app_indices {
+            let name = self.entries[idx].name.clone();
+            let icon_name = self.entries[idx].icon_name.clone();
+            self.add_pinned(&name, &icon_name, Some(idx));
+        }
+
+        // Separator 1 (between apps and system items)
         self.icons.push(DockIcon {
             name: String::new(),
             icon_name: String::new(),
@@ -63,19 +68,7 @@ impl AppManager {
             item_type: DockItemType::Separator,
         });
 
-        // Folders and Trash (Right section, added now but they will be kept at the end during sync)
-        // Separator 2
-        self.icons.push(DockIcon {
-            name: String::new(),
-            icon_name: String::new(),
-            is_running: false,
-            x: 0.0,
-            zoom: 1.0,
-            target_zoom: 1.0,
-            entry_index: None,
-            item_type: DockItemType::Separator,
-        });
-        
+        // System items
         self.icons.push(DockIcon {
             name: "Downloads".to_string(),
             icon_name: "folder-download".to_string(),
@@ -181,7 +174,7 @@ impl AppManager {
             }
         }
 
-        // Rebuild self.icons to preserve order: Pinned -> Sep1 -> Running -> Sep2 -> Folders/Trash
+        // Rebuild self.icons to preserve order: Pinned -> Sep -> Running -> Folder/Trash
         let mut new_icons = Vec::new();
         
         // 1. Pinned apps
@@ -191,24 +184,24 @@ impl AppManager {
             }
         }
         
-        // 2. Separator 1
-        new_icons.push(DockIcon {
-            name: String::new(),
-            icon_name: String::new(),
-            is_running: false,
-            x: 0.0,
-            zoom: 1.0,
-            target_zoom: 1.0,
-            entry_index: None,
-            item_type: DockItemType::Separator,
-        });
-
-        // 3. Running apps
-        for icon in running_icons {
-            new_icons.push(icon);
+        // 2. Running apps (if any non-pinned)
+        if !running_icons.is_empty() {
+            new_icons.push(DockIcon {
+                name: String::new(),
+                icon_name: String::new(),
+                is_running: false,
+                x: 0.0,
+                zoom: 1.0,
+                target_zoom: 1.0,
+                entry_index: None,
+                item_type: DockItemType::Separator,
+            });
+            for icon in running_icons {
+                new_icons.push(icon);
+            }
         }
 
-        // 4. Separator 2
+        // 3. Separator and Folder / Trash
         new_icons.push(DockIcon {
             name: String::new(),
             icon_name: String::new(),
@@ -219,8 +212,6 @@ impl AppManager {
             entry_index: None,
             item_type: DockItemType::Separator,
         });
-
-        // 5. Folders / Trash
         for icon in &self.icons {
             if icon.item_type == DockItemType::Folder || icon.item_type == DockItemType::Trash {
                 new_icons.push(icon.clone());

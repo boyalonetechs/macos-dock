@@ -25,7 +25,7 @@ impl Renderer {
         self.height = height;
         self.zoom_headroom = zoom_headroom;
     }
-
+    
     pub fn render(&mut self, theme: &MacTheme, manager: &mut AppManager) -> (Vec<u8>, i32) {
         let mut surf = ImageSurface::create(Format::ARgb32, self.width, self.height)
             .expect("Failed to create render surface");
