@@ -75,6 +75,7 @@ impl ResizerPopup {
         })
     }
 
+    #[allow(dead_code)]
     pub fn show(&mut self, conn: &RustConnection, x: i16, y: i16) -> Result<(), Box<dyn std::error::Error>> {
         // Position the popup above the click point
         let px = (x - POPUP_W as i16 / 2).max(0);

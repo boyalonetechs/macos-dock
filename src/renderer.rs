@@ -200,7 +200,7 @@ impl Renderer {
 
                 // Bottom-anchored zoom: icons grow upward from the dock floor
                 let lift = (zoom - 1.0) * icon_size * 0.5;
-                ctx.translate(cx, floor_y - lift);
+                ctx.translate(cx, floor_y - lift + icon.bounce_offset);
 
                 // Scale from hi-res down to the target display size
                 ctx.scale(zoom / max_zoom, zoom / max_zoom);
@@ -209,6 +209,41 @@ impl Renderer {
                 ctx.rectangle(-sw / 2.0, -sh, sw, sh);
                 ctx.fill().ok();
 
+                ctx.restore().ok();
+            } else if icon.item_type == DockItemType::Launcher {
+                // Fallback: draw a 3×3 grid of rounded squares
+                ctx.save().ok();
+                let lift = (zoom - 1.0) * icon_size * 0.5;
+                ctx.translate(cx, floor_y - lift + icon.bounce_offset);
+                ctx.scale(zoom, zoom);
+
+                let s = icon_size * 0.55;
+                let top = -icon_size;
+                let left = -s / 2.0;
+                let cell = s / 3.0;
+                let dot = cell * 0.55;
+                let gap = (cell - dot) / 2.0;
+
+                for row in 0..3i32 {
+                    for col in 0..3i32 {
+                        let x = left + col as f64 * cell + gap;
+                        let y = top + row as f64 * cell + gap;
+                        let r = dot * 0.22;
+                        ctx.new_path();
+                        ctx.move_to(x + r, y);
+                        ctx.line_to(x + dot - r, y);
+                        ctx.arc(x + dot - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
+                        ctx.line_to(x + dot, y + dot - r);
+                        ctx.arc(x + dot - r, y + dot - r, r, 0.0, std::f64::consts::FRAC_PI_2);
+                        ctx.line_to(x + r, y + dot);
+                        ctx.arc(x + r, y + dot - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
+                        ctx.line_to(x, y + r);
+                        ctx.arc(x + r, y + r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
+                        ctx.close_path();
+                        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.85);
+                        ctx.fill().ok();
+                    }
+                }
                 ctx.restore().ok();
             }
 
