@@ -5,17 +5,28 @@ mod app;
 mod desktop;
 mod popup;
 mod appgrid;
+mod menu;
+mod settings;
+mod menubar;
 
 use renderer::Renderer;
 use theme::MacTheme;
 use x11_window::DockWindow;
 use popup::ResizerPopup;
 use appgrid::AppGrid;
+use menu::{ContextMenu, MenuAction};
+use settings::SettingsPopup;
+use menubar::{MenuBar, MenuBarAction, ControlCenterPopup, BatteryPopup};
 use x11rb::protocol::Event;
-use x11rb::protocol::xproto::Rectangle;
+use x11rb::protocol::xproto::{Rectangle, ConnectionExt as _};
+use x11rb::connection::Connection as _;
 
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+const HIDE_DELAY: Duration = Duration::from_secs(2);
+const TRIGGER_H: i32 = 6;
+const SLIDE_SPEED: f64 = 0.18;
 
 /// Headroom = transparent band above the pill where zoomed icons pop into.
 /// Icons grow bottom-anchored, lifting by (zoom-1)*icon_size*0.5,
@@ -79,12 +90,172 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         theme.icon_size as f64,
     )?;
 
+    let mut context_menu = ContextMenu::new(
+        &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
+    )?;
+
+    let mut settings_popup = SettingsPopup::new(
+        &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
+    )?;
+
+    let menubar = MenuBar::new(
+        &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
+        dock.screen_w, dock.screen_h,
+    )?;
+    menubar.render(&dock.conn, "Finder")?;
+    let mut last_menubar_render = Instant::now();
+
+    let mut cc_popup = ControlCenterPopup::new(
+        &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
+    )?;
+
+    let mut bat_popup = BatteryPopup::new(
+        &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
+    )?;
+
     let mut need_resize = true;
     let mut need_redraw = true;
 
+    // ── Auto-hide state ────────────────────────────────────────────────────
+    let mut last_activity = Instant::now();
+    let mut slide_offset: f64 = 0.0;   // 0.0 = fully visible, 1.0 = fully hidden
+    let mut dock_active = true;         // target: should the dock be visible?
+    let mut prev_fully_hidden = false;  // track state transitions
+    let mut dock_hidden_by_user = false; // user toggled "Hide Dock"
+    let mut menubar_hidden_by_user = false; // user toggled "Hide Menu Bar"
+
     loop {
         while let Some(event) = dock.next_event()? {
-            // App grid takes priority when visible
+            // Settings popup takes highest priority
+            if settings_popup.visible {
+                if settings_popup.should_hide(&event) {
+                    settings_popup.hide(&dock.conn)?;
+                    continue;
+                }
+                if settings_popup.handle_event(&event) {
+                    dock_hidden_by_user = settings_popup.dock_hidden;
+                    menubar_hidden_by_user = settings_popup.menubar_hidden;
+                    dock.set_dock_windows_visible(!dock_hidden_by_user)?;
+                    // Show/hide menubar
+                    if menubar_hidden_by_user {
+                        let _ = dock.conn.unmap_window(menubar.window);
+                    } else {
+                        let _ = dock.conn.map_window(menubar.window);
+                    }
+                    let _ = dock.conn.flush();
+                    settings_popup.render(&dock.conn)?;
+                    continue;
+                }
+                if matches!(event, Event::Expose(ev) if ev.window == settings_popup.window) {
+                    settings_popup.render(&dock.conn)?;
+                    continue;
+                }
+            }
+
+            // Control center popup
+            if cc_popup.visible {
+                if cc_popup.should_hide(&event) {
+                    cc_popup.hide(&dock.conn)?;
+                    continue;
+                }
+                if matches!(event, Event::Expose(ev) if ev.window == cc_popup.window) {
+                    cc_popup.render(&dock.conn)?;
+                    continue;
+                }
+            }
+
+            // Battery popup
+            if bat_popup.visible {
+                if bat_popup.should_hide(&event) {
+                    bat_popup.hide(&dock.conn)?;
+                    continue;
+                }
+                if matches!(event, Event::Expose(ev) if ev.window == bat_popup.window) {
+                    bat_popup.render(&dock.conn)?;
+                    continue;
+                }
+            }
+
+            // Menu bar clicks
+            if !menubar_hidden_by_user {
+                let click_root_x = match &event {
+                    Event::ButtonPress(ev) => ev.root_x as i32,
+                    _ => 0,
+                };
+                match menubar.handle_event(&event) {
+                    MenuBarAction::AppleMenu | MenuBarAction::Calendar => {
+                        settings_popup.dock_hidden = dock_hidden_by_user;
+                        settings_popup.menubar_hidden = menubar_hidden_by_user;
+                        settings_popup.show(&dock.conn, dock.screen_w, dock.screen_h)?;
+                    }
+                    MenuBarAction::ControlCenter => {
+                        cc_popup.show(&dock.conn, dock.screen_w, dock.screen_h, click_root_x)?;
+                    }
+                    MenuBarAction::Battery => {
+                        bat_popup.show(&dock.conn, dock.screen_w, dock.screen_h)?;
+                    }
+                    _ => {}
+                }
+                if matches!(event, Event::Expose(ev) if ev.window == menubar.window) {
+                    let _ = menubar.render(&dock.conn, "Finder");
+                    continue;
+                }
+            }
+
+            // Context menu
+            if context_menu.visible {
+                if context_menu.should_hide(&event) {
+                    context_menu.hide(&dock.conn)?;
+                    continue;
+                }
+                if let Some((action, idx)) = context_menu.handle_event(&event) {
+                    context_menu.hide(&dock.conn)?;
+                    match action {
+                        MenuAction::NewWindow => {
+                            if let Some(entry_idx) = manager.icons[idx].entry_index {
+                                if let Some(entry) = manager.entries.get(entry_idx) {
+                                    let _ = std::process::Command::new("gio")
+                                        .args(["launch", &entry.file_path.to_string_lossy()]).spawn();
+                                    manager.icons[idx].bouncing = true;
+                                    manager.icons[idx].bounce_phase = 0.0;
+                                }
+                            }
+                        }
+                        MenuAction::Settings => {
+                            settings_popup.dock_hidden = dock_hidden_by_user;
+                            settings_popup.menubar_hidden = menubar_hidden_by_user;
+                            settings_popup.show(&dock.conn, dock.screen_w, dock.screen_h)?;
+                        }
+                        MenuAction::KeepInDock => {
+                            manager.icons[idx].item_type = if manager.icons[idx].item_type == app::DockItemType::PinnedApp {
+                                app::DockItemType::RunningApp
+                            } else if manager.icons[idx].item_type == app::DockItemType::RunningApp {
+                                app::DockItemType::PinnedApp
+                            } else {
+                                manager.icons[idx].item_type.clone()
+                            };
+                            need_resize = true;
+                            need_redraw = true;
+                        }
+                        MenuAction::Quit => {
+                            if let Some(entry_idx) = manager.icons[idx].entry_index {
+                                if let Some(entry) = manager.entries.get(entry_idx) {
+                                    // Try to kill by WM class or name
+                                    let _ = std::process::Command::new("pkill")
+                                        .arg("-f").arg(&entry.name).spawn();
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if matches!(event, Event::Expose(ev) if ev.window == context_menu.window) {
+                    context_menu.render(&dock.conn)?;
+                    continue;
+                }
+            }
+
+            // App grid
             if app_grid.visible {
                 if app_grid.should_hide(&event) {
                     app_grid.hide(&dock.conn)?;
@@ -102,6 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            // Resizer popup
             if popup.visible {
                 if popup.should_hide(&event) {
                     popup.hide(&dock.conn)?;
@@ -112,7 +284,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if new_size != theme.icon_size {
                         theme.icon_size = new_size;
                         theme.icon_spacing = new_size + 8;
-                        // Keep pill shape: radius = half of new dock height
                         theme.corner_radius = (theme.dock_height() as f64 / 2.0).floor();
                         need_resize = true;
                         need_redraw = true;
@@ -126,8 +297,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Event::Expose(ev) if ev.window == dock.window => {
                     need_redraw = true;
                 }
+                Event::EnterNotify(ev) if ev.event == dock.window => {
+                    dock_active = true;
+                    last_activity = Instant::now();
+                    dock.cursor_x = ev.event_x as f64;
+                    need_redraw = true;
+                }
                 Event::MotionNotify(ev) if ev.event == dock.window => {
                     dock.cursor_x = ev.event_x as f64;
+                    last_activity = Instant::now();
+                    dock_active = true;
                     need_redraw = true;
                 }
                 Event::LeaveNotify(ev) if ev.event == dock.window => {
@@ -144,7 +323,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match ev.detail {
                         1 => { // Left click
-                            for icon in &manager.icons {
+                            for (i, icon) in manager.icons.iter().enumerate() {
                                 let w = theme.icon_size as f64 * icon.zoom;
                                 if click_x >= icon.x - w / 2.0 && click_x <= icon.x + w / 2.0 {
                                     if icon.item_type == app::DockItemType::Separator { continue; }
@@ -159,26 +338,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     } else if icon.item_type == app::DockItemType::Trash {
                                         let _ = std::process::Command::new("xdg-open")
                                             .arg("trash:///").spawn();
+                                    } else if icon.is_running {
+                                        if let Some(wid) = manager.windows_for_icon(i).first().copied() {
+                                            let _ = dock.activate_window(wid);
+                                        }
                                     } else if let Some(idx) = icon.entry_index {
                                         if let Some(entry) = manager.entries.get(idx) {
                                             let _ = std::process::Command::new("gio")
                                                 .args(["launch", &entry.file_path.to_string_lossy()]).spawn();
+                                            manager.icons[i].bouncing = true;
+                                            manager.icons[i].bounce_phase = 0.0;
                                         }
                                     }
                                     break;
                                 }
                             }
                         }
-                        3 => { // Right click
-                            popup.icon_size = theme.icon_size as f64;
-                            popup.show(&dock.conn, ev.root_x, ev.root_y)?;
-                            popup.render(&dock.conn)?;
+                        3 => { // Right click → context menu
+                            for (i, icon) in manager.icons.iter().enumerate() {
+                                let w = theme.icon_size as f64 * icon.zoom;
+                                if click_x >= icon.x - w / 2.0 && click_x <= icon.x + w / 2.0 {
+                                    context_menu.show(
+                                        &dock.conn, ev.root_x, ev.root_y, i,
+                                        icon.item_type == app::DockItemType::PinnedApp,
+                                        dock_hidden_by_user,
+                                    )?;
+                                    break;
+                                }
+                            }
                         }
                         _ => {}
                     }
                 }
                 _ => {}
             }
+        }
+
+        // ── Auto-hide: start hiding after inactivity ───────────────────────
+        if dock_active && last_activity.elapsed() > HIDE_DELAY {
+            if !dock.cursor_x.is_finite() || dock.cursor_x < -9999.0 {
+                dock_active = false;
+            }
+        }
+
+        // ── Slide animation ────────────────────────────────────────────────
+        let target = if dock_active { 0.0 } else { 1.0 };
+        if (slide_offset - target).abs() > 0.002 {
+            slide_offset += (target - slide_offset) * SLIDE_SPEED;
+            need_redraw = true;
+        } else {
+            slide_offset = target;
         }
 
         let windows = dock.get_running_windows().unwrap_or_default();
@@ -198,24 +407,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let dock_w = compute_dock_width(&theme, &manager);
             let dock_x = ((dock.screen_w as i32 - dock_w as i32) / 2) as i16;
-            // Pill sits flush at screen bottom (bottom_margin lifts it slightly)
-            let dock_y = screen_h as i16 - full_h as i16 - theme.bottom_margin as i16;
+
+            // Normal visible position: pill at screen bottom
+            let visible_y = screen_h as i32 - full_h as i32 - theme.bottom_margin as i32;
+            // Hidden position: only trigger strip at screen bottom
+            let hidden_y = screen_h as i32 - TRIGGER_H;
+            let slide_distance = (hidden_y - visible_y) as f64;
+            let actual_y = visible_y + (slide_offset * slide_distance) as i32;
 
             if need_resize || dock_w != dock.width || full_h != dock.height as i32 {
-                dock.configure(dock_x, dock_y, dock_w, full_h as u16)?;
+                dock.configure(dock_x, actual_y as i16, dock_w, full_h as u16)?;
                 dock.width = dock_w;
                 dock.height = full_h as u16;
+                need_redraw = true;
+            } else {
+                // Smoothly move the window
+                let _ = dock.configure(dock_x, actual_y as i16, dock_w, full_h as u16);
+            }
+            need_resize = false;
 
-                // Input shape covers only the pill, not the headroom above it
+            // ── Input shape ────────────────────────────────────────────────
+            let fully_hidden = slide_offset > 0.98;
+            if fully_hidden && !prev_fully_hidden {
+                // Just became hidden → trigger strip input shape
+                dock.set_input_shape(&Rectangle {
+                    x: 0,
+                    y: 0,
+                    width: dock_w,
+                    height: TRIGGER_H as u16,
+                });
+            } else if !fully_hidden && prev_fully_hidden {
+                // Just became visible → pill input shape
                 dock.set_input_shape(&Rectangle {
                     x: 0,
                     y: zh as i16,
                     width: dock_w,
                     height: bg_h as u16,
                 });
-                need_redraw = true;
+            } else if !fully_hidden && prev_fully_hidden == false && slide_offset < 0.02 {
+                // Fully visible → tight pill shape
+                dock.set_input_shape(&Rectangle {
+                    x: 0,
+                    y: zh as i16,
+                    width: dock_w,
+                    height: bg_h as u16,
+                });
             }
-            need_resize = false;
+            prev_fully_hidden = fully_hidden;
 
             manager.update_zoom(dock.cursor_x, theme.sigma, theme.max_zoom);
         }
@@ -234,12 +472,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             need_redraw = true;
         }
 
-        if need_redraw {
+        // ── Bounce animation ───────────────────────────────────────────────
+        for icon in &mut manager.icons {
+            if icon.bouncing {
+                icon.bounce_phase += 0.18;
+                // Damped sine: bounces 6 times then stops
+                let envelope = (-icon.bounce_phase * 0.25).exp();
+                icon.bounce_offset = envelope * (icon.bounce_phase * 3.0).sin() * 14.0;
+                // Stop when amplitude is negligible or app became running
+                if envelope < 0.02 || icon.is_running {
+                    icon.bouncing = false;
+                    icon.bounce_offset = 0.0;
+                }
+                need_redraw = true;
+            }
+        }
+
+        // ── Menu bar clock refresh ────────────────────────────────────────
+        if !menubar_hidden_by_user && last_menubar_render.elapsed() > Duration::from_secs(1) {
+            let _ = menubar.render(&dock.conn, "Finder");
+            last_menubar_render = Instant::now();
+        }
+
+        // Only render when dock is at least partially visible
+        if need_redraw && slide_offset < 0.99 {
             let zh = headroom(&theme);
             let fh = theme.dock_height() + zh;
             renderer.resize(dock.width as i32, fh, zh);
             let (pixels, stride) = renderer.render(&theme, &mut manager);
             let _ = dock.push_pixels(&pixels, dock.width, fh as u16, stride);
+            need_redraw = false;
+        } else if slide_offset >= 0.99 {
             need_redraw = false;
         }
 

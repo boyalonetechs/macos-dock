@@ -200,7 +200,7 @@ impl Renderer {
 
                 // Bottom-anchored zoom: icons grow upward from the dock floor
                 let lift = (zoom - 1.0) * icon_size * 0.5;
-                ctx.translate(cx, floor_y - lift);
+                ctx.translate(cx, floor_y - lift + icon.bounce_offset);
 
                 // Scale from hi-res down to the target display size
                 ctx.scale(zoom / max_zoom, zoom / max_zoom);
@@ -214,7 +214,7 @@ impl Renderer {
                 // Fallback: draw a 3×3 grid of rounded squares
                 ctx.save().ok();
                 let lift = (zoom - 1.0) * icon_size * 0.5;
-                ctx.translate(cx, floor_y - lift);
+                ctx.translate(cx, floor_y - lift + icon.bounce_offset);
                 ctx.scale(zoom, zoom);
 
                 let s = icon_size * 0.55;

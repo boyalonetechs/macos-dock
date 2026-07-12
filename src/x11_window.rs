@@ -324,4 +324,147 @@ impl DockWindow {
     pub fn next_event(&self) -> Result<Option<Event>, ConnectionError> {
         self.conn.poll_for_event()
     }
+
+    pub fn activate_window(&self, wid: u32) -> Result<(), Box<dyn std::error::Error>> {
+        // Try xdotool first — most reliable across WMs (especially Deepin)
+        let wid_hex = format!("0x{:x}", wid);
+        let _ = std::process::Command::new("xdotool")
+            .args(["windowactivate", "--sync", &wid_hex])
+            .spawn();
+        let _ = std::process::Command::new("xdotool")
+            .args(["windowfocus", "--sync", &wid_hex])
+            .spawn();
+
+        // EWMH fallback: remove HIDDEN state
+        if let (Ok(sa), Ok(ha)) = (
+            self.conn.intern_atom(false, b"_NET_WM_STATE")?.reply(),
+            self.conn.intern_atom(false, b"_NET_WM_STATE_HIDDEN")?.reply(),
+        ) {
+            let data = [0u32, ha.atom, 0, 0, 0]; // 0 = remove
+            let ev = ClientMessageEvent::new(32, wid, sa.atom, data);
+            self.conn.send_event(false, wid, EventMask::PROPERTY_CHANGE, ev)?;
+        }
+
+        // Map the window
+        self.conn.map_window(wid)?;
+
+        // Raise
+        if let Ok(ra) = self.conn.intern_atom(false, b"_NET_RESTACK_WINDOW")?.reply() {
+            let data = [wid, 0u32, 0, 0, 0];
+            let ev = ClientMessageEvent::new(32, self.root, ra.atom, data);
+            self.conn.send_event(
+                false,
+                self.root,
+                EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+                ev,
+            )?;
+        }
+
+        // Activate
+        let net_active = *self.atoms.get("_NET_ACTIVE_WINDOW").unwrap();
+        let data = [wid, 2u32, 0, 0, 0]; // source=2 (pager/taskbar)
+        let ev = ClientMessageEvent::new(32, self.root, net_active, data);
+        self.conn.send_event(
+            false,
+            self.root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            ev,
+        )?;
+
+        self.conn.set_input_focus(1u8.into(), wid, 0u32)?;
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    pub fn find_system_dock_windows(&self) -> Vec<u32> {
+        let wm_type = match self.atoms.get("_NET_WM_WINDOW_TYPE") {
+            Some(a) => *a,
+            None => return Vec::new(),
+        };
+        let dock_type = match self.atoms.get("_NET_WM_WINDOW_TYPE_DOCK") {
+            Some(a) => *a,
+            None => return Vec::new(),
+        };
+
+        // Collect all managed windows from _NET_CLIENT_LIST_STACKING
+        let mut candidates: Vec<u32> = Vec::new();
+        if let Ok(r) = self.conn.intern_atom(false, b"_NET_CLIENT_LIST_STACKING") {
+            if let Ok(atom) = r.reply() {
+                if let Ok(r2) = self.conn.get_property(false, self.root, atom.atom, AtomEnum::WINDOW, 0, 4096) {
+                    if let Ok(reply) = r2.reply() {
+                        if reply.format == 32 {
+                            let len = reply.length as usize;
+                            for i in 0..len {
+                                let off = i * 4;
+                                if off + 4 <= reply.value.len() {
+                                    candidates.push(u32::from_ne_bytes(
+                                        [reply.value[off], reply.value[off+1], reply.value[off+2], reply.value[off+3]]
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also scan root's direct children (some docks aren't in the client list)
+        if let Ok(r) = self.conn.query_tree(self.root) {
+            if let Ok(tree) = r.reply() {
+                for &child in &tree.children {
+                    if !candidates.contains(&child) {
+                        candidates.push(child);
+                    }
+                }
+            }
+        }
+
+        let mut docks = Vec::new();
+        for wid in &candidates {
+            if *wid == self.window { continue; }
+
+            let mut is_dock = false;
+
+            // Check _NET_WM_WINDOW_TYPE
+            if let Ok(r) = self.conn.get_property(false, *wid, wm_type, AtomEnum::ATOM, 0, 1) {
+                if let Ok(reply) = r.reply() {
+                    if reply.format == 32 && reply.value.len() >= 4 {
+                        let atom = u32::from_ne_bytes([reply.value[0], reply.value[1], reply.value[2], reply.value[3]]);
+                        if atom == dock_type {
+                            is_dock = true;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: check WM_CLASS for known dock names
+            if !is_dock {
+                if let Some(class) = self.get_window_class(*wid) {
+                    let lower = class.to_lowercase();
+                    if lower.contains("dock") || lower.contains("panel") || lower.contains("taskbar")
+                        || lower == "dde-dock" || lower == "plank" || lower == "latte-dock" {
+                        is_dock = true;
+                    }
+                }
+            }
+
+            if is_dock {
+                docks.push(*wid);
+            }
+        }
+        docks
+    }
+
+    pub fn set_dock_windows_visible(&self, visible: bool) -> Result<(), Box<dyn std::error::Error>> {
+        let docks = self.find_system_dock_windows();
+        for wid in &docks {
+            if visible {
+                self.conn.map_window(*wid)?;
+            } else {
+                self.conn.unmap_window(*wid)?;
+            }
+        }
+        self.conn.flush()?;
+        Ok(())
+    }
 }

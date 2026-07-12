@@ -24,6 +24,9 @@ pub struct DockIcon {
     pub target_zoom: f64,
     pub entry_index: Option<usize>,
     pub item_type: DockItemType,
+    pub bouncing: bool,
+    pub bounce_phase: f64,
+    pub bounce_offset: f64,
 }
 
 pub struct AppManager {
@@ -74,6 +77,7 @@ impl AppManager {
             target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Separator,
+            bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
         });
 
         // System items
@@ -86,6 +90,7 @@ impl AppManager {
             target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Folder,
+            bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
         });
 
         self.icons.push(DockIcon {
@@ -97,6 +102,7 @@ impl AppManager {
             target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Trash,
+            bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
         });
 
         // Launcher icon at the very front (leftmost)
@@ -109,6 +115,7 @@ impl AppManager {
             target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Launcher,
+            bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
         };
         self.icons.insert(0, launcher);
     }
@@ -123,6 +130,7 @@ impl AppManager {
             target_zoom: 1.0,
             entry_index: entry_idx,
             item_type: DockItemType::PinnedApp,
+            bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
         });
     }
 
@@ -189,6 +197,7 @@ impl AppManager {
                         target_zoom: 1.0,
                         entry_index: Some(idx),
                         item_type: DockItemType::RunningApp,
+                        bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
                     });
                     // We'll update new_window_map index later after rebuilding self.icons
                 }
@@ -216,6 +225,7 @@ impl AppManager {
                 target_zoom: 1.0,
                 entry_index: None,
                 item_type: DockItemType::Separator,
+                bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
             });
             for icon in running_icons {
                 new_icons.push(icon);
@@ -232,6 +242,7 @@ impl AppManager {
             target_zoom: 1.0,
             entry_index: None,
             item_type: DockItemType::Separator,
+            bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
         });
         for icon in &self.icons {
             if icon.item_type == DockItemType::Folder || icon.item_type == DockItemType::Trash {
@@ -297,5 +308,12 @@ impl AppManager {
 
     pub fn all_entries(&self) -> &[DesktopEntry] {
         &self.entries
+    }
+
+    pub fn windows_for_icon(&self, icon_idx: usize) -> Vec<u32> {
+        self.window_map.iter()
+            .filter(|(_, idx)| **idx == icon_idx)
+            .map(|(wid, _)| *wid)
+            .collect()
     }
 }
