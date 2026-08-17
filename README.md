@@ -7,7 +7,7 @@ A high-performance, open-source macOS-inspired Dock built from the ground up in 
 ## ✨ Features
 
 - **Blazing Fast Performance:** Written in pure Rust for near-instant startup, negligible CPU usage, and low double-digit RAM footprint.
-- **macOS Tahoe Liquid Glass Aesthetic:** 
+- **macOS Tahoe Liquid Glass Aesthetic:**
   - Dynamic visual refraction and real-time frosted glassmorphism (`backdrop-filter`).
   - Fluid light-dispersion highlights that respond to cursor proximity.
   - Layered translucent depth effects with system wallpaper color sampling.
@@ -35,7 +35,7 @@ A high-performance, open-source macOS-inspired Dock built from the ground up in 
 
 ### Prerequisites
 
-Ensure you have Rust and `cargo` installed on your system:
+Install Rust and `cargo` via `rustup`:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs) | sh
+curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs) | sh -s -- -y && source "$HOME/.cargo/env"
