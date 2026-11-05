@@ -4,6 +4,7 @@ use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use cairo::{Context, Format, ImageSurface};
+use crate::theme::MacTheme;
 
 const MENU_W: i32 = 210;
 const ITEM_H: i32 = 32;
@@ -101,6 +102,7 @@ impl ContextMenu {
         icon_index: usize,
         keep_in_dock: bool,
         dock_hidden: bool,
+        theme: &MacTheme,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.icon_index = icon_index;
         self.keep_in_dock = keep_in_dock;
@@ -122,7 +124,7 @@ impl ContextMenu {
         conn.flush()?;
         self.visible = true;
         self.hovered = None;
-        self.render(conn)?;
+        self.render(conn, theme)?;
         Ok(())
     }
 
@@ -200,7 +202,7 @@ impl ContextMenu {
         self.total_h = y;
     }
 
-    pub fn render(&self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn render(&self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         let w = MENU_W;
         let h = self.total_h;
         let mut surface = ImageSurface::create(Format::ARgb32, w, h)
@@ -215,9 +217,9 @@ impl ContextMenu {
         let wf = w as f64;
         let hf = h as f64;
         round_rect(&ctx, 0.0, 0.0, wf, hf, CORNER_R);
-        ctx.set_source_rgba(0.12, 0.12, 0.14, 0.94);
+        set_color(&ctx, theme.panel_bg);
         ctx.fill_preserve().ok();
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.18);
+        set_color(&ctx, theme.panel_border);
         ctx.set_line_width(1.0);
         ctx.stroke().ok();
 
@@ -228,7 +230,7 @@ impl ContextMenu {
             let rh_f = rh as f64;
 
             if item.separator {
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.12);
+                set_color(&ctx, theme.separator_color);
                 ctx.set_line_width(1.0);
                 ctx.move_to(12.0, ry_f + rh_f / 2.0);
                 ctx.line_to(wf - 12.0, ry_f + rh_f / 2.0);
@@ -239,17 +241,17 @@ impl ContextMenu {
             // Hover highlight
             if self.hovered == Some(i) {
                 round_rect(&ctx, 4.0, ry_f + 2.0, wf - 8.0, rh_f - 4.0, 6.0);
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.12);
+                set_color(&ctx, theme.hover_bg);
                 ctx.fill().ok();
             }
 
             // Label
             let text_color = if item.action == MenuAction::Quit {
-                (1.0, 0.4, 0.4, 0.95)
+                theme.danger
             } else {
-                (1.0, 1.0, 1.0, 0.90)
+                theme.text_primary
             };
-            ctx.set_source_rgba(text_color.0, text_color.1, text_color.2, text_color.3);
+            set_color(&ctx, text_color);
             ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
             ctx.set_font_size(FONT_SIZE);
             ctx.move_to(16.0, ry_f + rh_f / 2.0 + FONT_SIZE * 0.35);
@@ -285,6 +287,10 @@ impl ContextMenu {
         conn.flush()?;
         Ok(())
     }
+}
+
+fn set_color(ctx: &Context, color: crate::theme::Color) {
+    ctx.set_source_rgba(color.0, color.1, color.2, color.3);
 }
 
 fn round_rect(ctx: &Context, x: f64, y: f64, w: f64, h: f64, r: f64) {

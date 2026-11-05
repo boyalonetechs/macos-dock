@@ -11,7 +11,7 @@ mod settings;
 mod menubar;
 
 use renderer::Renderer;
-use theme::MacTheme;
+use theme::{MacTheme, ThemeMode};
 use x11_window::DockWindow;
 use popup::ResizerPopup;
 use appgrid::AppGrid;
@@ -53,7 +53,7 @@ fn compute_dock_width(theme: &MacTheme, manager: &app::AppManager) -> u16 {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut theme = MacTheme::new_liquid_glass();
+    let mut theme = MacTheme::new(ThemeMode::Dark);
     let zoom_headroom = headroom(&theme);
     let bg_height = theme.dock_height();
     let full_height = bg_height + zoom_headroom;
@@ -100,12 +100,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut settings_popup = SettingsPopup::new(
         &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
     )?;
+    settings_popup.mode = theme.mode;
 
     let menubar = MenuBar::new(
         &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
         dock.screen_w, dock.screen_h,
     )?;
-    menubar.render(&dock.conn, "Finder", backdrop.surface())?;
+    menubar.render(&dock.conn, "Finder", backdrop.surface(), &theme)?;
     let mut last_menubar_render = Instant::now();
 
     let mut cc_popup = ControlCenterPopup::new(
@@ -151,11 +152,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = dock.conn.map_window(menubar.window);
                     }
                     let _ = dock.conn.flush();
-                    settings_popup.render(&dock.conn)?;
+
+                    if settings_popup.mode != theme.mode {
+                        theme.set_mode(settings_popup.mode);
+                        need_redraw = true;
+                        if !menubar_hidden_by_user {
+                            let _ = menubar.render(&dock.conn, "Finder", backdrop.surface(), &theme);
+                        }
+                    }
+                    settings_popup.render(&dock.conn, &theme)?;
                     continue;
                 }
                 if matches!(event, Event::Expose(ev) if ev.window == settings_popup.window) {
-                    settings_popup.render(&dock.conn)?;
+                    settings_popup.render(&dock.conn, &theme)?;
                     continue;
                 }
             }
@@ -167,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
                 if matches!(event, Event::Expose(ev) if ev.window == cc_popup.window) {
-                    cc_popup.render(&dock.conn)?;
+                    cc_popup.render(&dock.conn, &theme)?;
                     continue;
                 }
             }
@@ -179,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
                 if matches!(event, Event::Expose(ev) if ev.window == bat_popup.window) {
-                    bat_popup.render(&dock.conn)?;
+                    bat_popup.render(&dock.conn, &theme)?;
                     continue;
                 }
             }
@@ -192,20 +201,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 match menubar.handle_event(&event) {
                     MenuBarAction::AppleMenu | MenuBarAction::Calendar => {
+                        settings_popup.mode = theme.mode;
                         settings_popup.dock_hidden = dock_hidden_by_user;
                         settings_popup.menubar_hidden = menubar_hidden_by_user;
-                        settings_popup.show(&dock.conn, dock.screen_w, dock.screen_h)?;
+                        settings_popup.show(&dock.conn, dock.screen_w, dock.screen_h, &theme)?;
                     }
                     MenuBarAction::ControlCenter => {
-                        cc_popup.show(&dock.conn, dock.screen_w, dock.screen_h, click_root_x)?;
+                        cc_popup.show(&dock.conn, dock.screen_w, dock.screen_h, click_root_x, &theme)?;
                     }
                     MenuBarAction::Battery => {
-                        bat_popup.show(&dock.conn, dock.screen_w, dock.screen_h)?;
+                        bat_popup.show(&dock.conn, dock.screen_w, dock.screen_h, &theme)?;
                     }
                     _ => {}
                 }
                 if matches!(event, Event::Expose(ev) if ev.window == menubar.window) {
-                    let _ = menubar.render(&dock.conn, "Finder", backdrop.surface());
+                    let _ = menubar.render(&dock.conn, "Finder", backdrop.surface(), &theme);
                     continue;
                 }
             }
@@ -230,9 +240,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         MenuAction::Settings => {
+                            settings_popup.mode = theme.mode;
                             settings_popup.dock_hidden = dock_hidden_by_user;
                             settings_popup.menubar_hidden = menubar_hidden_by_user;
-                            settings_popup.show(&dock.conn, dock.screen_w, dock.screen_h)?;
+                            settings_popup.show(&dock.conn, dock.screen_w, dock.screen_h, &theme)?;
                         }
                         MenuAction::KeepInDock => {
                             manager.icons[idx].item_type = if manager.icons[idx].item_type == app::DockItemType::PinnedApp {
@@ -258,7 +269,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
                 if matches!(event, Event::Expose(ev) if ev.window == context_menu.window) {
-                    context_menu.render(&dock.conn)?;
+                    context_menu.render(&dock.conn, &theme)?;
                     continue;
                 }
             }
@@ -276,7 +287,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
                 if matches!(event, Event::Expose(ev) if ev.window == app_grid.window) {
-                    app_grid.render(&dock.conn)?;
+                    app_grid.render(&dock.conn, &theme)?;
                     continue;
                 }
             }
@@ -296,7 +307,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         need_resize = true;
                         need_redraw = true;
                     }
-                    popup.render(&dock.conn)?;
+                    popup.render(&dock.conn, &theme)?;
                     continue;
                 }
             }
@@ -336,7 +347,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if click_x >= icon.x - w / 2.0 && click_x <= icon.x + w / 2.0 {
                                     if icon.item_type == app::DockItemType::Separator { continue; }
                                     if icon.item_type == app::DockItemType::Launcher {
-                                        app_grid.toggle(&dock.conn)?;
+                                        app_grid.toggle(&dock.conn, &theme)?;
                                         break;
                                     }
                                     if icon.item_type == app::DockItemType::Folder && icon.name == "Downloads" {
@@ -370,6 +381,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         &dock.conn, ev.root_x, ev.root_y, i,
                                         icon.item_type == app::DockItemType::PinnedApp,
                                         dock_hidden_by_user,
+                                        &theme,
                                     )?;
                                     break;
                                 }
@@ -502,7 +514,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // ── Menu bar clock refresh ────────────────────────────────────────
         if !menubar_hidden_by_user && last_menubar_render.elapsed() > Duration::from_secs(1) {
-            let _ = menubar.render(&dock.conn, "Finder", backdrop.surface());
+            let _ = menubar.render(&dock.conn, "Finder", backdrop.surface(), &theme);
             last_menubar_render = Instant::now();
         }
 
@@ -511,7 +523,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if backdrop.poll_ready() {
             need_redraw = true;
             if !menubar_hidden_by_user {
-                let _ = menubar.render(&dock.conn, "Finder", backdrop.surface());
+                let _ = menubar.render(&dock.conn, "Finder", backdrop.surface(), &theme);
             }
         }
 

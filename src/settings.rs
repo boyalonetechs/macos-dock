@@ -4,16 +4,29 @@ use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use cairo::{Context, Format, ImageSurface};
+use crate::theme::{MacTheme, ThemeMode};
 
-const POPUP_W: i32 = 260;
-const POPUP_H: i32 = 140;
+const POPUP_W: i32 = 280;
+const POPUP_H: i32 = 196;
 const CORNER_R: f64 = 14.0;
+
+const CONTROL_X: f64 = 20.0;
+const CONTROL_Y: f64 = 62.0;
+const CONTROL_W: f64 = 240.0;
+const CONTROL_H: f64 = 32.0;
+
+const TOGGLE_W: f64 = 44.0;
+const TOGGLE_H: f64 = 24.0;
+const TOGGLE_X: f64 = POPUP_W as f64 - 20.0 - TOGGLE_W;
+const DOCK_TOGGLE_Y: f64 = 116.0;
+const MENUBAR_TOGGLE_Y: f64 = 156.0;
 
 pub struct SettingsPopup {
     pub window: Window,
     pub visible: bool,
     pub dock_hidden: bool,
     pub menubar_hidden: bool,
+    pub mode: ThemeMode,
     depth: u8,
 }
 
@@ -58,10 +71,23 @@ impl SettingsPopup {
         conn.change_property8(PropMode::REPLACE, win, AtomEnum::WM_NAME, AtomEnum::STRING, b"Dock Settings")?;
         conn.flush()?;
 
-        Ok(Self { window: win, visible: false, depth, dock_hidden: false, menubar_hidden: false })
+        Ok(Self {
+            window: win,
+            visible: false,
+            dock_hidden: false,
+            menubar_hidden: false,
+            mode: ThemeMode::Dark,
+            depth,
+        })
     }
 
-    pub fn show(&mut self, conn: &RustConnection, screen_w: u16, screen_h: u16) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn show(
+        &mut self,
+        conn: &RustConnection,
+        screen_w: u16,
+        screen_h: u16,
+        theme: &MacTheme,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let x = (screen_w as i32 - POPUP_W) / 2;
         let y = (screen_h as i32 - POPUP_H) / 2;
         conn.configure_window(self.window, &ConfigureWindowAux::new()
@@ -69,7 +95,7 @@ impl SettingsPopup {
         conn.map_window(self.window)?;
         conn.flush()?;
         self.visible = true;
-        self.render(conn)?;
+        self.render(conn, theme)?;
         Ok(())
     }
 
@@ -80,27 +106,34 @@ impl SettingsPopup {
         Ok(())
     }
 
-    /// Returns true if any toggle was clicked
+    /// Returns true if a control changed.
     pub fn handle_event(&mut self, event: &Event) -> bool {
         match event {
             Event::ButtonPress(ev) if ev.event == self.window => {
-                let x = ev.event_x as i32;
-                let y = ev.event_y as i32;
-                let toggle_x = POPUP_W - 50;
-                let toggle_w = 44;
-                let toggle_h = 24;
+                let x = ev.event_x as f64;
+                let y = ev.event_y as f64;
 
-                // "Hide Dock" toggle — row at y=42..66
-                if x >= toggle_x && x <= toggle_x + toggle_w
-                    && y >= 42 && y <= 42 + toggle_h {
-                    self.dock_hidden = !self.dock_hidden;
-                    return true;
+                if x >= CONTROL_X && x <= CONTROL_X + CONTROL_W
+                    && y >= CONTROL_Y && y <= CONTROL_Y + CONTROL_H {
+                    let picked = if x < CONTROL_X + CONTROL_W / 2.0 {
+                        ThemeMode::Light
+                    } else {
+                        ThemeMode::Dark
+                    };
+                    let changed = self.mode != picked;
+                    self.mode = picked;
+                    return changed;
                 }
-                // "Hide Menu Bar" toggle — row at y=82..106
-                if x >= toggle_x && x <= toggle_x + toggle_w
-                    && y >= 82 && y <= 82 + toggle_h {
-                    self.menubar_hidden = !self.menubar_hidden;
-                    return true;
+
+                if x >= TOGGLE_X && x <= TOGGLE_X + TOGGLE_W {
+                    if y >= DOCK_TOGGLE_Y && y <= DOCK_TOGGLE_Y + TOGGLE_H {
+                        self.dock_hidden = !self.dock_hidden;
+                        return true;
+                    }
+                    if y >= MENUBAR_TOGGLE_Y && y <= MENUBAR_TOGGLE_Y + TOGGLE_H {
+                        self.menubar_hidden = !self.menubar_hidden;
+                        return true;
+                    }
                 }
                 false
             }
@@ -111,10 +144,9 @@ impl SettingsPopup {
     pub fn should_hide(&self, event: &Event) -> bool {
         if !self.visible { return false; }
         matches!(event, Event::ButtonPress(ev) if ev.event != self.window)
-            || matches!(event, Event::LeaveNotify(ev) if ev.event == self.window)
     }
 
-    pub fn render(&self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn render(&self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         let w = POPUP_W;
         let h = POPUP_H;
         let mut surface = ImageSurface::create(Format::ARgb32, w, h)
@@ -126,86 +158,75 @@ impl SettingsPopup {
         ctx.set_operator(cairo::Operator::Over);
 
         let wf = w as f64;
-        let hf = h as f64;
 
-        // Background
-        round_rect(&ctx, 0.0, 0.0, wf, hf, CORNER_R);
-        ctx.set_source_rgba(0.12, 0.12, 0.14, 0.94);
+        // Panel
+        round_rect(&ctx, 0.0, 0.0, wf, h as f64, CORNER_R);
+        ctx.set_source_rgba(theme.panel_bg.0, theme.panel_bg.1, theme.panel_bg.2, theme.panel_bg.3);
         ctx.fill_preserve().ok();
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.18);
+        ctx.set_source_rgba(theme.panel_border.0, theme.panel_border.1, theme.panel_border.2, theme.panel_border.3);
         ctx.set_line_width(1.0);
         ctx.stroke().ok();
 
         // Title
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
+        ctx.set_source_rgba(theme.text_primary.0, theme.text_primary.1, theme.text_primary.2, theme.text_primary.3);
         ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-        ctx.set_font_size(14.0);
-        ctx.move_to(18.0, 28.0);
-        ctx.show_text("Settings").ok();
+        ctx.set_font_size(15.0);
+        ctx.move_to(20.0, 31.0);
+        ctx.show_text("Dock & Menu Bar").ok();
 
-        // "Hide Dock" label
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.90);
+        ctx.set_source_rgba(theme.text_muted.0, theme.text_muted.1, theme.text_muted.2, theme.text_muted.3);
+        ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        ctx.set_font_size(11.0);
+        ctx.move_to(20.0, 54.0);
+        ctx.show_text("Appearance").ok();
+
+        // Segmented Light / Dark control
+        round_rect(&ctx, CONTROL_X, CONTROL_Y, CONTROL_W, CONTROL_H, 8.0);
+        ctx.set_source_rgba(theme.control_bg.0, theme.control_bg.1, theme.control_bg.2, theme.control_bg.3);
+        ctx.fill().ok();
+
+        let seg_w = (CONTROL_W - 4.0) / 2.0;
+        let selected_x = match self.mode {
+            ThemeMode::Light => CONTROL_X + 2.0,
+            ThemeMode::Dark => CONTROL_X + 2.0 + seg_w,
+        };
+        round_rect(&ctx, selected_x, CONTROL_Y + 2.0, seg_w, CONTROL_H - 4.0, 7.0);
+        ctx.set_source_rgba(
+            theme.control_selected.0,
+            theme.control_selected.1,
+            theme.control_selected.2,
+            theme.control_selected.3,
+        );
+        ctx.fill_preserve().ok();
+        ctx.set_source_rgba(theme.panel_border.0, theme.panel_border.1, theme.panel_border.2, theme.panel_border.3);
+        ctx.set_line_width(1.0);
+        ctx.stroke().ok();
+
+        ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        ctx.set_font_size(12.5);
+        draw_segment_label(&ctx, "Light", CONTROL_X + 2.0 + seg_w / 2.0, CONTROL_Y, self.mode == ThemeMode::Light, theme);
+        draw_segment_label(&ctx, "Dark", CONTROL_X + 2.0 + seg_w * 1.5, CONTROL_Y, self.mode == ThemeMode::Dark, theme);
+
+        // Divider between appearance and the visibility switches
+        ctx.set_source_rgba(theme.panel_border.0, theme.panel_border.1, theme.panel_border.2, theme.panel_border.3);
+        ctx.set_line_width(1.0);
+        ctx.move_to(20.0, 108.0);
+        ctx.line_to(wf - 20.0, 108.0);
+        ctx.stroke().ok();
+
+        // Hide Dock
+        ctx.set_source_rgba(theme.text_primary.0, theme.text_primary.1, theme.text_primary.2, theme.text_primary.3);
         ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         ctx.set_font_size(13.0);
-        ctx.move_to(18.0, 60.0);
+        ctx.move_to(20.0, DOCK_TOGGLE_Y + 16.5);
         ctx.show_text("Hide Dock").ok();
+        draw_toggle(&ctx, TOGGLE_X, DOCK_TOGGLE_Y, self.dock_hidden, theme);
 
-        // Toggle switch for "Hide Dock"
-        let toggle_x = wf - 50.0;
-        let toggle_y = 46.0;
-        let toggle_w = 44.0;
-        let toggle_h = 24.0;
-        let toggle_r = toggle_h / 2.0;
-
-        round_rect(&ctx, toggle_x, toggle_y, toggle_w, toggle_h, toggle_r);
-        if self.dock_hidden {
-            ctx.set_source_rgba(0.3, 0.7, 0.4, 0.9);
-        } else {
-            ctx.set_source_rgba(0.4, 0.4, 0.45, 0.8);
-        }
-        ctx.fill().ok();
-
-        let knob_r = 9.0;
-        let knob_x = if self.dock_hidden {
-            toggle_x + toggle_w - toggle_r
-        } else {
-            toggle_x + toggle_r
-        };
-        let knob_y = toggle_y + toggle_h / 2.0;
-        ctx.new_path();
-        ctx.arc(knob_x, knob_y, knob_r, 0.0, 2.0 * std::f64::consts::PI);
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
-        ctx.fill().ok();
-
-        // "Hide Menu Bar" label
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.90);
-        ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
-        ctx.set_font_size(13.0);
-        ctx.move_to(18.0, 100.0);
+        // Hide Menu Bar
+        ctx.move_to(20.0, MENUBAR_TOGGLE_Y + 16.5);
         ctx.show_text("Hide Menu Bar").ok();
+        draw_toggle(&ctx, TOGGLE_X, MENUBAR_TOGGLE_Y, self.menubar_hidden, theme);
 
-        // Toggle switch for "Hide Menu Bar"
-        let toggle2_y = 86.0;
-        round_rect(&ctx, toggle_x, toggle2_y, toggle_w, toggle_h, toggle_r);
-        if self.menubar_hidden {
-            ctx.set_source_rgba(0.3, 0.7, 0.4, 0.9);
-        } else {
-            ctx.set_source_rgba(0.4, 0.4, 0.45, 0.8);
-        }
-        ctx.fill().ok();
-
-        let knob2_x = if self.menubar_hidden {
-            toggle_x + toggle_w - toggle_r
-        } else {
-            toggle_x + toggle_r
-        };
-        let knob2_y = toggle2_y + toggle_h / 2.0;
-        ctx.new_path();
-        ctx.arc(knob2_x, knob2_y, knob_r, 0.0, 2.0 * std::f64::consts::PI);
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
-        ctx.fill().ok();
-
-        // Push pixels
         drop(ctx);
         let data = surface.data().map_err(|e| format!("surface data: {}", e))?.to_vec();
         let stride = surface.stride() as usize;
@@ -230,6 +251,29 @@ impl SettingsPopup {
         conn.flush()?;
         Ok(())
     }
+}
+
+fn draw_segment_label(ctx: &Context, label: &str, center_x: f64, control_y: f64, selected: bool, theme: &MacTheme) {
+    let color = if selected { theme.text_primary } else { theme.text_secondary };
+    ctx.set_source_rgba(color.0, color.1, color.2, color.3);
+    let ext = ctx.text_extents(label).unwrap();
+    let baseline = control_y + CONTROL_H / 2.0 + ext.height() / 2.0 - 1.0;
+    ctx.move_to(center_x - ext.width() / 2.0, baseline);
+    ctx.show_text(label).ok();
+}
+
+fn draw_toggle(ctx: &Context, x: f64, y: f64, on: bool, theme: &MacTheme) {
+    let r = TOGGLE_H / 2.0;
+    round_rect(ctx, x, y, TOGGLE_W, TOGGLE_H, r);
+    let color = if on { theme.accent } else { theme.toggle_off };
+    ctx.set_source_rgba(color.0, color.1, color.2, color.3);
+    ctx.fill().ok();
+
+    let knob_x = if on { x + TOGGLE_W - r } else { x + r };
+    ctx.new_path();
+    ctx.arc(knob_x, y + r, 9.5, 0.0, 2.0 * std::f64::consts::PI);
+    ctx.set_source_rgba(theme.knob.0, theme.knob.1, theme.knob.2, theme.knob.3);
+    ctx.fill().ok();
 }
 
 fn round_rect(ctx: &Context, x: f64, y: f64, w: f64, h: f64, r: f64) {

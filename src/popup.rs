@@ -4,6 +4,7 @@ use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use cairo::{Context, Format, ImageSurface};
+use crate::theme::MacTheme;
 
 const POPUP_W: u16 = 280;
 const POPUP_H: u16 = 60;
@@ -141,7 +142,7 @@ impl ResizerPopup {
         matches!(event, Event::LeaveNotify(ev) if ev.event == self.window && !self.dragging)
     }
 
-    pub fn render(&self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn render(&self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         let w = POPUP_W as i32;
         let h = POPUP_H as i32;
         let mut surface = ImageSurface::create(Format::ARgb32, w, h)
@@ -170,17 +171,17 @@ impl ResizerPopup {
         ctx.arc(r, r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
         ctx.close_path();
 
-        // Fill dark frosted background
-        ctx.set_source_rgba(0.12, 0.12, 0.14, 0.92);
+        // Fill frosted panel background
+        set_color(&ctx, theme.panel_bg);
         ctx.fill_preserve().ok();
 
         // Border
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.2);
+        set_color(&ctx, theme.panel_border);
         ctx.set_line_width(1.0);
         ctx.stroke().ok();
 
         // Labels
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5);
+        set_color(&ctx, theme.text_muted);
         ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         ctx.set_font_size(11.0);
         ctx.move_to(SLIDER_MARGIN - 6.0, 16.0);
@@ -194,7 +195,7 @@ impl ResizerPopup {
         let track_x1 = SLIDER_MARGIN;
         let track_x2 = wf - SLIDER_MARGIN;
 
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15);
+        set_color(&ctx, theme.separator_color);
         ctx.set_line_width(4.0);
         ctx.set_line_cap(cairo::LineCap::Round);
         ctx.move_to(track_x1, track_y);
@@ -203,7 +204,7 @@ impl ResizerPopup {
 
         // Active track (filled portion)
         let knob_x = self.value_to_x(self.icon_size);
-        ctx.set_source_rgba(0.3, 0.6, 1.0, 0.9);
+        set_color(&ctx, theme.accent);
         ctx.set_line_width(4.0);
         ctx.move_to(track_x1, track_y);
         ctx.line_to(knob_x, track_y);
@@ -212,9 +213,10 @@ impl ResizerPopup {
         // Knob
         ctx.new_path();
         ctx.arc(knob_x, track_y, KNOB_RADIUS, 0.0, 2.0 * std::f64::consts::PI);
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+        set_color(&ctx, theme.knob);
         ctx.fill_preserve().ok();
-        ctx.set_source_rgba(0.3, 0.6, 1.0, 0.6);
+        let stroke = theme.accent;
+        ctx.set_source_rgba(stroke.0, stroke.1, stroke.2, 0.6);
         ctx.set_line_width(2.0);
         ctx.stroke().ok();
 
@@ -255,4 +257,8 @@ impl ResizerPopup {
 
         Ok(())
     }
+}
+
+fn set_color(ctx: &Context, color: crate::theme::Color) {
+    ctx.set_source_rgba(color.0, color.1, color.2, color.3);
 }

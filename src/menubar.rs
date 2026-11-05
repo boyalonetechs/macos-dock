@@ -5,6 +5,7 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use cairo::{Context, Format, ImageSurface};
 use std::fs;
+use crate::theme::MacTheme;
 
 pub const BAR_HEIGHT: u16 = 28;
 
@@ -125,6 +126,7 @@ impl MenuBar {
         conn: &RustConnection,
         active_app_name: &str,
         backdrop: Option<&ImageSurface>,
+        theme: &MacTheme,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let w = self.screen_w as i32;
         let h = BAR_HEIGHT as i32;
@@ -141,7 +143,7 @@ impl MenuBar {
             ctx.rectangle(0.0, 0.0, w as f64, h as f64);
             ctx.set_source_surface(backdrop, 0.0, 0.0).ok();
             ctx.paint().ok();
-            ctx.set_source_rgba(0.02, 0.02, 0.04, 0.18);
+            set_color(&ctx, theme.veil);
             ctx.paint().ok();
         }
 
@@ -149,14 +151,14 @@ impl MenuBar {
         // becomes opaque enough to remain readable.
         ctx.rectangle(0.0, 0.0, w as f64, h as f64);
         if backdrop.is_some() {
-            ctx.set_source_rgba(0.08, 0.08, 0.10, 0.06);
+            set_color(&ctx, theme.bar_bg);
         } else {
-            ctx.set_source_rgba(0.10, 0.10, 0.12, 0.82);
+            set_color(&ctx, theme.panel_bg);
         }
         ctx.fill().ok();
 
         // Bottom border
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.12);
+        set_color(&ctx, theme.bar_border);
         ctx.set_line_width(1.0);
         ctx.move_to(0.0, h as f64 - 0.5);
         ctx.line_to(w as f64, h as f64 - 0.5);
@@ -165,7 +167,7 @@ impl MenuBar {
         let y_center = h as f64 / 2.0;
 
         // ── Apple logo ──────────────────────────────────────────
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+        set_color(&ctx, theme.text_primary);
         ctx.new_path();
         ctx.arc(15.0, y_center + 1.5, 5.0, 0.0, 2.0 * std::f64::consts::PI);
         ctx.fill().ok();
@@ -174,7 +176,7 @@ impl MenuBar {
         ctx.arc(19.5, y_center - 0.5, 2.5, 0.0, 2.0 * std::f64::consts::PI);
         ctx.fill().ok();
         ctx.set_operator(cairo::Operator::Over);
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+        set_color(&ctx, theme.text_primary);
         ctx.set_line_width(1.3);
         ctx.new_path();
         ctx.move_to(15.0, y_center - 3.5);
@@ -182,7 +184,7 @@ impl MenuBar {
         ctx.stroke().ok();
 
         // Active app name
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+        set_color(&ctx, theme.text_primary);
         ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
         ctx.set_font_size(13.0);
         ctx.move_to(30.0, y_center + 4.5);
@@ -190,7 +192,7 @@ impl MenuBar {
 
         // Menu items
         let menu_items = ["File", "Edit", "View", "Go", "Window", "Help"];
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.85);
+        set_color(&ctx, theme.text_secondary);
         ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         ctx.set_font_size(13.0);
         let mut x_pos = 30.0 + measure_text_width(&ctx, active_app_name) + 20.0;
@@ -202,17 +204,17 @@ impl MenuBar {
 
         // ── Right side ─────────────────────────────────────────
         let time_str = read_datetime();
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.85);
+        set_color(&ctx, theme.text_secondary);
         ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         ctx.set_font_size(12.5);
         ctx.move_to(w as f64 - 270.0, y_center + 4.5);
         ctx.show_text(&time_str).ok();
 
-        draw_magnifier(&ctx, w as f64 - 118.0, y_center);
-        draw_tahoe_control_center(&ctx, w as f64 - 80.0, y_center);
+        draw_magnifier(&ctx, w as f64 - 118.0, y_center, theme.text_secondary);
+        draw_tahoe_control_center(&ctx, w as f64 - 80.0, y_center, theme);
 
         let battery_info = read_battery();
-        draw_battery(&ctx, w as f64 - 25.0, y_center, &battery_info);
+        draw_battery(&ctx, w as f64 - 25.0, y_center, &battery_info, theme.text_primary);
 
         drop(ctx);
 
@@ -267,7 +269,7 @@ impl ControlCenterPopup {
         Ok(Self { window: win, visible: false, depth })
     }
 
-    pub fn show(&mut self, conn: &RustConnection, screen_w: u16, _screen_h: u16, anchor_x: i32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn show(&mut self, conn: &RustConnection, screen_w: u16, _screen_h: u16, anchor_x: i32, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         let x = (anchor_x - CC_W / 2).max(4).min(screen_w as i32 - CC_W - 4);
         let y = BAR_HEIGHT as i32 + 4;
         conn.configure_window(self.window, &ConfigureWindowAux::new()
@@ -275,7 +277,7 @@ impl ControlCenterPopup {
         conn.map_window(self.window)?;
         conn.flush()?;
         self.visible = true;
-        self.render(conn)?;
+        self.render(conn, theme)?;
         Ok(())
     }
 
@@ -291,10 +293,10 @@ impl ControlCenterPopup {
         matches!(event, Event::ButtonPress(ev) if ev.event != self.window)
     }
 
-    pub fn render(&self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
-        render_dark_popup(conn, self.window, self.depth, CC_W, CC_H, |ctx, w_f, _h_f| {
+    pub fn render(&self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
+        render_panel(conn, self.window, self.depth, CC_W, CC_H, theme, |ctx, w_f, _h_f| {
             // Title
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+            set_color(ctx, theme.text_primary);
             ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
             ctx.set_font_size(13.0);
             ctx.move_to(18.0, 28.0);
@@ -321,22 +323,28 @@ impl ControlCenterPopup {
 
                 // Tile background
                 round_rect(ctx, tx, ty, tile_w, tile_h, 10.0);
-                if t.enabled {
-                    ctx.set_source_rgba(0.22, 0.48, 0.88, 0.95);
-                } else {
-                    ctx.set_source_rgba(0.25, 0.25, 0.28, 0.9);
-                }
+                set_color(ctx, if t.enabled { theme.accent } else { theme.control_bg });
                 ctx.fill().ok();
 
                 // Label
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+                let label_color = if t.enabled {
+                    (1.0, 1.0, 1.0, 0.95)
+                } else {
+                    theme.text_primary
+                };
+                set_color(ctx, label_color);
                 ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
                 ctx.set_font_size(12.0);
                 ctx.move_to(tx + 12.0, ty + 22.0);
                 ctx.show_text(t.label).ok();
 
                 // Sub-label
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.55);
+                let sub_color = if t.enabled {
+                    (1.0, 1.0, 1.0, 0.55)
+                } else {
+                    theme.text_muted
+                };
+                set_color(ctx, sub_color);
                 ctx.set_font_size(10.0);
                 ctx.move_to(tx + 12.0, ty + 38.0);
                 let sub = if t.enabled { "On" } else { "Off" };
@@ -347,25 +355,25 @@ impl ControlCenterPopup {
             let slider_y = start_y + 3.0 * (tile_h + 10.0) + 4.0;
             // Brightness slider
             round_rect(ctx, 18.0, slider_y, w_f - 36.0, 32.0, 10.0);
-            ctx.set_source_rgba(0.25, 0.25, 0.28, 0.9);
+            set_color(ctx, theme.control_bg);
             ctx.fill().ok();
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.6);
+            set_color(ctx, theme.text_secondary);
             ctx.set_font_size(10.0);
             ctx.move_to(28.0, slider_y + 20.0);
             ctx.show_text("Display Brightness").ok();
             // Slider track
             let track_y = slider_y + 26.0;
             round_rect(ctx, 28.0, track_y, w_f - 56.0, 4.0, 2.0);
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.2);
+            set_color(ctx, theme.bar_border);
             ctx.fill().ok();
             // Slider fill
             round_rect(ctx, 28.0, track_y, (w_f - 56.0) * 0.7, 4.0, 2.0);
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
+            set_color(ctx, theme.text_muted);
             ctx.fill().ok();
             // Knob
             ctx.new_path();
             ctx.arc(28.0 + (w_f - 56.0) * 0.7, track_y + 2.0, 5.0, 0.0, 2.0 * std::f64::consts::PI);
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+            set_color(ctx, theme.knob);
             ctx.fill().ok();
         })
     }
@@ -394,7 +402,7 @@ impl BatteryPopup {
         Ok(Self { window: win, visible: false, depth })
     }
 
-    pub fn show(&mut self, conn: &RustConnection, screen_w: u16, _screen_h: u16) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn show(&mut self, conn: &RustConnection, screen_w: u16, _screen_h: u16, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         let x = screen_w as i32 - BAT_POPUP_W - 8;
         let y = BAR_HEIGHT as i32 + 4;
         conn.configure_window(self.window, &ConfigureWindowAux::new()
@@ -402,7 +410,7 @@ impl BatteryPopup {
         conn.map_window(self.window)?;
         conn.flush()?;
         self.visible = true;
-        self.render(conn)?;
+        self.render(conn, theme)?;
         Ok(())
     }
 
@@ -418,12 +426,12 @@ impl BatteryPopup {
         matches!(event, Event::ButtonPress(ev) if ev.event != self.window)
     }
 
-    pub fn render(&self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
-        render_dark_popup(conn, self.window, self.depth, BAT_POPUP_W, BAT_POPUP_H, |ctx, w_f, _h_f| {
+    pub fn render(&self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
+        render_panel(conn, self.window, self.depth, BAT_POPUP_W, BAT_POPUP_H, theme, |ctx, w_f, _h_f| {
             let info = read_battery();
 
             // Title
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+            set_color(ctx, theme.text_primary);
             ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
             ctx.set_font_size(13.0);
             ctx.move_to(18.0, 28.0);
@@ -437,13 +445,13 @@ impl BatteryPopup {
 
             // Battery outline
             round_rect(ctx, bat_x, bat_y, bat_w, bat_h, 5.0);
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.3);
+            set_color(ctx, theme.text_secondary);
             ctx.set_line_width(1.5);
             ctx.stroke().ok();
 
             // Nub
             ctx.rectangle(bat_x + bat_w, bat_y + 7.0, 4.0, bat_h - 14.0);
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.3);
+            set_color(ctx, theme.text_secondary);
             ctx.fill().ok();
 
             // Fill
@@ -460,7 +468,7 @@ impl BatteryPopup {
             ctx.fill().ok();
 
             // Percentage text
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95);
+            set_color(ctx, theme.text_primary);
             ctx.set_font_size(18.0);
             ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
             let pct = format!("{}%", info.percentage);
@@ -469,7 +477,7 @@ impl BatteryPopup {
             ctx.show_text(&pct).ok();
 
             // Status line
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.6);
+            set_color(ctx, theme.text_muted);
             ctx.set_font_size(11.0);
             ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
             let status = if info.charging {
@@ -481,14 +489,14 @@ impl BatteryPopup {
             ctx.show_text(status).ok();
 
             // Separator
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1);
+            set_color(ctx, theme.panel_border);
             ctx.set_line_width(1.0);
             ctx.move_to(18.0, bat_y + bat_h + 66.0);
             ctx.line_to(w_f - 18.0, bat_y + bat_h + 66.0);
             ctx.stroke().ok();
 
             // Battery health
-            ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
+            set_color(ctx, theme.text_secondary);
             ctx.set_font_size(11.0);
             ctx.move_to(18.0, bat_y + bat_h + 82.0);
             ctx.show_text("Battery Health: Normal").ok();
@@ -545,11 +553,12 @@ fn create_popup_window(
     Ok(win)
 }
 
-fn render_dark_popup(
+fn render_panel(
     conn: &RustConnection,
     window: Window,
     depth: u8,
     w: i32, h: i32,
+    theme: &MacTheme,
     draw: impl FnOnce(&Context, f64, f64),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut surface = ImageSurface::create(Format::ARgb32, w, h)
@@ -563,11 +572,11 @@ fn render_dark_popup(
     let w_f = w as f64;
     let h_f = h as f64;
 
-    // Dark frosted background
+    // Frosted panel background
     round_rect(&ctx, 0.0, 0.0, w_f, h_f, 14.0);
-    ctx.set_source_rgba(0.12, 0.12, 0.14, 0.94);
+    set_color(&ctx, theme.panel_bg);
     ctx.fill_preserve().ok();
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15);
+    set_color(&ctx, theme.panel_border);
     ctx.set_line_width(1.0);
     ctx.stroke().ok();
 
@@ -596,6 +605,10 @@ fn render_dark_popup(
     conn.free_gc(gc)?;
     conn.flush()?;
     Ok(())
+}
+
+fn set_color(ctx: &Context, color: crate::theme::Color) {
+    ctx.set_source_rgba(color.0, color.1, color.2, color.3);
 }
 
 fn round_rect(ctx: &Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
@@ -641,13 +654,13 @@ fn read_battery() -> BatteryInfo {
     BatteryInfo { percentage: 100, charging: false }
 }
 
-fn draw_battery(ctx: &Context, x: f64, y_center: f64, info: &BatteryInfo) {
+fn draw_battery(ctx: &Context, x: f64, y_center: f64, info: &BatteryInfo, color: crate::theme::Color) {
     let bw = 18.0;
     let bh = 10.0;
     let bx = x - bw;
     let by = y_center - bh / 2.0;
 
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.75);
+    set_color(ctx, color);
     ctx.set_line_width(1.0);
     round_rect(ctx, bx, by, bw, bh, 2.0);
     ctx.stroke().ok();
@@ -669,7 +682,7 @@ fn draw_battery(ctx: &Context, x: f64, y_center: f64, info: &BatteryInfo) {
 
 // ── Tahoe Control Center icon ────────────────────────────────────
 
-fn draw_tahoe_control_center(ctx: &Context, x: f64, y_center: f64) {
+fn draw_tahoe_control_center(ctx: &Context, x: f64, y_center: f64, theme: &MacTheme) {
     let w = 18.0;
     let h = 14.0;
     let rx = x - w / 2.0;
@@ -688,10 +701,10 @@ fn draw_tahoe_control_center(ctx: &Context, x: f64, y_center: f64) {
     ctx.line_to(rx, ry + r);
     ctx.arc(rx + r, ry + r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
     ctx.close_path();
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15);
+    set_color(ctx, theme.hover_bg);
     ctx.fill().ok();
 
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.90);
+    set_color(ctx, theme.text_primary);
     ctx.set_line_width(1.5);
     ctx.set_line_cap(cairo::LineCap::Round);
 
@@ -722,8 +735,8 @@ fn draw_tahoe_control_center(ctx: &Context, x: f64, y_center: f64) {
 
 // ── Spotlight magnifier ──────────────────────────────────────────
 
-fn draw_magnifier(ctx: &Context, x: f64, y_center: f64) {
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.85);
+fn draw_magnifier(ctx: &Context, x: f64, y_center: f64, color: crate::theme::Color) {
+    set_color(ctx, color);
     ctx.set_line_width(1.3);
     ctx.new_path();
     ctx.arc(x, y_center - 1.0, 4.5, 0.0, 2.0 * std::f64::consts::PI);

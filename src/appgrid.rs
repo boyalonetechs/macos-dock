@@ -5,6 +5,7 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 use cairo::{Context, Format, ImageSurface};
 use crate::desktop::{DesktopEntry, IconCache};
+use crate::theme::MacTheme;
 
 const ICON_SIZE: i32 = 64;
 const CELL_W: i32 = 120;
@@ -106,15 +107,15 @@ impl AppGrid {
         })
     }
 
-    pub fn toggle(&mut self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn toggle(&mut self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         if self.visible {
             self.hide(conn)
         } else {
-            self.show(conn)
+            self.show(conn, theme)
         }
     }
 
-    pub fn show(&mut self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn show(&mut self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         let x = (self.screen_w as i32 - self.grid_w) / 2;
         let y = (self.screen_h as i32 - self.grid_h) / 2;
         conn.configure_window(self.window, &ConfigureWindowAux::new()
@@ -125,7 +126,7 @@ impl AppGrid {
         conn.map_window(self.window)?;
         conn.flush()?;
         self.visible = true;
-        self.render(conn)?;
+        self.render(conn, theme)?;
         Ok(())
     }
 
@@ -170,7 +171,7 @@ impl AppGrid {
         }
     }
 
-    pub fn render(&mut self, conn: &RustConnection) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn render(&mut self, conn: &RustConnection, theme: &MacTheme) -> Result<(), Box<dyn std::error::Error>> {
         let w = self.grid_w;
         let h = self.grid_h;
         let mut surface = ImageSurface::create(Format::ARgb32, w, h)
@@ -182,7 +183,7 @@ impl AppGrid {
         ctx.paint().ok();
         ctx.set_operator(cairo::Operator::Over);
 
-        // Frosted dark background
+        // Frosted background
         let wf = w as f64;
         let hf = h as f64;
         let r = 20.0_f64;
@@ -197,14 +198,14 @@ impl AppGrid {
         ctx.line_to(0.0, r);
         ctx.arc(r, r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
         ctx.close_path();
-        ctx.set_source_rgba(0.08, 0.08, 0.10, 0.88);
+        set_color(&ctx, theme.panel_bg);
         ctx.fill_preserve().ok();
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15);
+        set_color(&ctx, theme.panel_border);
         ctx.set_line_width(1.0);
         ctx.stroke().ok();
 
         // Title
-        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.7);
+        set_color(&ctx, theme.text_secondary);
         ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
         ctx.set_font_size(18.0);
         ctx.move_to(PADDING as f64, (MARGIN_TOP - 20) as f64);
@@ -229,12 +230,12 @@ impl AppGrid {
                     // Placeholder circle
                     ctx.new_path();
                     ctx.arc(cx, cy + ICON_SIZE as f64 / 2.0, ICON_SIZE as f64 / 2.0, 0.0, 2.0 * std::f64::consts::PI);
-                    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.1);
+                    set_color(&ctx, theme.hover_bg);
                     ctx.fill().ok();
                 }
 
                 // Label
-                ctx.set_source_rgba(1.0, 1.0, 1.0, 0.85);
+                set_color(&ctx, theme.text_primary);
                 ctx.select_font_face("sans-serif", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
                 ctx.set_font_size(11.0);
 
@@ -295,4 +296,8 @@ impl AppGrid {
 
         Ok(())
     }
+}
+
+fn set_color(ctx: &Context, color: crate::theme::Color) {
+    ctx.set_source_rgba(color.0, color.1, color.2, color.3);
 }

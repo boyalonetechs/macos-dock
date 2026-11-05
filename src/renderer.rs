@@ -102,9 +102,9 @@ impl Renderer {
                 .ok();
             ctx.paint().ok();
 
-            // Slight dark veil: keeps white labels/icons legible when the
-            // wallpaper behind the dock is very bright.
-            ctx.set_source_rgba(0.02, 0.02, 0.04, 0.18);
+            // Slight veil: keeps labels/icons legible when the wallpaper
+            // behind the dock is very bright (or very dark in dark mode).
+            set_color(ctx, theme.veil);
             ctx.paint().ok();
             ctx.restore().ok();
         }
@@ -119,8 +119,10 @@ impl Renderer {
             body.add_color_stop_rgba(0.0, r1, g1, b1, a1);
             body.add_color_stop_rgba(1.0, r2, g2, b2, a2);
         } else {
-            body.add_color_stop_rgba(0.0, 0.13, 0.13, 0.15, 0.78);
-            body.add_color_stop_rgba(1.0, 0.06, 0.06, 0.08, 0.88);
+            let (r1, g1, b1, a1) = theme.fallback_top;
+            let (r2, g2, b2, a2) = theme.fallback_bottom;
+            body.add_color_stop_rgba(0.0, r1, g1, b1, a1);
+            body.add_color_stop_rgba(1.0, r2, g2, b2, a2);
         }
         pill(ctx);
         ctx.set_source(&body).ok();
@@ -300,4 +302,8 @@ impl Renderer {
             }
         }
     }
+}
+
+fn set_color(ctx: &Context, color: crate::theme::Color) {
+    ctx.set_source_rgba(color.0, color.1, color.2, color.3);
 }

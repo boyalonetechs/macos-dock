@@ -4,7 +4,7 @@ A high-performance, open-source macOS-inspired Dock built from the ground up in 
 
 ---
 
-## ✨ Features
+##  Features
 
 - **Blazing Fast Performance:** Written in pure Rust for near-instant startup, negligible CPU usage, and low double-digit RAM footprint.
 - **macOS Tahoe Liquid Glass Aesthetic:**
@@ -31,7 +31,7 @@ A high-performance, open-source macOS-inspired Dock built from the ground up in 
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Prerequisites
 
