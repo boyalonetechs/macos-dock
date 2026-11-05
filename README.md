@@ -21,7 +21,7 @@ A high-performance, open-source macOS-inspired Dock built from the ground up in 
 
 ---
 
-## 🛠️ Tech Stack & Dependencies
+## Tech Stack & Dependencies
 
 - **Language:** [Rust](https://www.rust-lang.org/) (2021 edition)
 - **GUI & Graphics:** [`wgpu`](https://github.com/gfx-rs/wgpu) / Custom Metal Shader Pipeline
