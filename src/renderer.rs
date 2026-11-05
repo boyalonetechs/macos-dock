@@ -26,17 +26,25 @@ impl Renderer {
         self.zoom_headroom = zoom_headroom;
     }
     
-    pub fn render(&mut self, theme: &MacTheme, manager: &mut AppManager) -> (Vec<u8>, i32) {
+    pub fn render(
+        &mut self,
+        theme: &MacTheme,
+        manager: &mut AppManager,
+        backdrop: Option<&ImageSurface>,
+        screen_x: i32,
+        screen_y: i32,
+    ) -> (Vec<u8>, i32) {
         let mut surf = ImageSurface::create(Format::ARgb32, self.width, self.height)
             .expect("Failed to create render surface");
         let ctx = Context::new(&surf).expect("Failed to create cairo context");
 
-        // Wipe to fully transparent — compositor sees through and applies blur
+        // Wipe to fully transparent so the compositor (and the headroom band
+        // above the pill) lets the desktop show through.
         ctx.set_operator(cairo::Operator::Clear);
         ctx.paint().ok();
         ctx.set_operator(cairo::Operator::Over);
 
-        self.draw_background(&ctx, theme);
+        self.draw_background(&ctx, theme, backdrop, screen_x, screen_y);
         self.draw_icons(&ctx, theme, manager);
 
         drop(ctx);
@@ -48,7 +56,14 @@ impl Renderer {
     // -----------------------------------------------------------------------
     // Liquid-glass pill
     // -----------------------------------------------------------------------
-    fn draw_background(&self, ctx: &Context, theme: &MacTheme) {
+    fn draw_background(
+        &self,
+        ctx: &Context,
+        theme: &MacTheme,
+        backdrop: Option<&ImageSurface>,
+        screen_x: i32,
+        screen_y: i32,
+    ) {
         ctx.save().ok();
 
         // y0 = top of the pill (below the transparent headroom band)
@@ -72,13 +87,41 @@ impl Renderer {
             ctx.close_path();
         };
 
+        // ── 0. Blurred desktop backdrop ────────────────────────────────────
+        // Sampled from the wallpaper by `Backdrop`, so the glass effect does
+        // not depend on a compositor that understands KDE's blur atom.
+        if let Some(backdrop) = backdrop {
+            ctx.save().ok();
+            pill(ctx);
+            ctx.clip();
+
+            // The backdrop surface covers the whole screen. Shift it by the
+            // window's screen position so local pill coordinates line up with
+            // the desktop pixels actually behind the dock.
+            ctx.set_source_surface(backdrop, -screen_x as f64, -screen_y as f64)
+                .ok();
+            ctx.paint().ok();
+
+            // Slight dark veil: keeps white labels/icons legible when the
+            // wallpaper behind the dock is very bright.
+            ctx.set_source_rgba(0.02, 0.02, 0.04, 0.18);
+            ctx.paint().ok();
+            ctx.restore().ok();
+        }
+
         // ── 1. Glass body fill ─────────────────────────────────────────────
-        // Near-zero white opacity — compositor blur provides the visual fill.
+        // Thin white sheen over the blur. If no wallpaper could be loaded,
+        // fall back to an opaque dark glass so the dock is still usable.
         let body = cairo::LinearGradient::new(0.0, y0, 0.0, y0 + bg_h);
-        let (r1, g1, b1, a1) = theme.bg_top;
-        let (r2, g2, b2, a2) = theme.bg_bottom;
-        body.add_color_stop_rgba(0.0, r1, g1, b1, a1);
-        body.add_color_stop_rgba(1.0, r2, g2, b2, a2);
+        if backdrop.is_some() {
+            let (r1, g1, b1, a1) = theme.bg_top;
+            let (r2, g2, b2, a2) = theme.bg_bottom;
+            body.add_color_stop_rgba(0.0, r1, g1, b1, a1);
+            body.add_color_stop_rgba(1.0, r2, g2, b2, a2);
+        } else {
+            body.add_color_stop_rgba(0.0, 0.13, 0.13, 0.15, 0.78);
+            body.add_color_stop_rgba(1.0, 0.06, 0.06, 0.08, 0.88);
+        }
         pill(ctx);
         ctx.set_source(&body).ok();
         ctx.fill().ok();

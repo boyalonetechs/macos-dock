@@ -42,8 +42,6 @@ fn find_argb_visual(conn: &RustConnection, screen: usize) -> Option<(Visualid, u
 }
 
 impl DockWindow {
-    /// `initial_width` is the dock's starting pixel width (not the full screen width).
-    /// `dock_height` is the full window height including zoom headroom.
     pub fn new(initial_width: u16, dock_height: u16) -> Result<Self, Box<dyn std::error::Error>> {
         let (conn, screen_idx) = x11rb::connect(None)?;
         let screen_info = &conn.setup().roots[screen_idx];
@@ -59,7 +57,6 @@ impl DockWindow {
         let colormap = conn.generate_id()?;
         conn.create_colormap(ColormapAlloc::NONE, colormap, root, visual)?;
 
-        // Centre the dock horizontally from the start
         let start_x = ((display_w as i32 - initial_width as i32) / 2) as i16;
         let start_y = (display_h - dock_height) as i16;
 
@@ -69,13 +66,13 @@ impl DockWindow {
             root,
             start_x,
             start_y,
-            initial_width,   // ← use actual dock width, NOT display_w
+            initial_width,   
             dock_height,
             0,
             WindowClass::INPUT_OUTPUT,
             visual,
             &CreateWindowAux::new()
-                .background_pixel(0)          // fully transparent background
+                .background_pixel(0)         
                 .border_pixel(0)
                 .colormap(colormap)
                 .override_redirect(0u32)
@@ -108,16 +105,13 @@ impl DockWindow {
             atoms.insert(name.to_string(), a);
         }
 
-        // Window type: DOCK
         let wm_type = *atoms.get("_NET_WM_WINDOW_TYPE").unwrap();
         let dock_type = *atoms.get("_NET_WM_WINDOW_TYPE_DOCK").unwrap();
         conn.change_property32(PropMode::REPLACE, win, wm_type, AtomEnum::ATOM, &[dock_type])?;
 
-        // Sticky desktop
         let desktop = *atoms.get("_NET_WM_DESKTOP").unwrap();
         conn.change_property32(PropMode::REPLACE, win, desktop, AtomEnum::CARDINAL, &[0xFFFFFFFF])?;
 
-        // State: sticky + above
         let state = *atoms.get("_NET_WM_STATE").unwrap();
         let sticky = *atoms.get("_NET_WM_STATE_STICKY").unwrap();
         let above = *atoms.get("_NET_WM_STATE_ABOVE").unwrap();
@@ -126,20 +120,14 @@ impl DockWindow {
         conn.map_window(win)?;
         conn.flush()?;
 
-        // Request compositor blur behind the entire window region
-        // Setting this to empty/0 tells KWin/Picom to blur the whole window alpha area
-        let blur_atom = *atoms.get("_KDE_NET_WM_BLUR_BEHIND_REGION").unwrap();
-        conn.change_property32(PropMode::REPLACE, win, blur_atom, AtomEnum::CARDINAL, &[])?;
-        conn.flush()?;
-
-        // Shape extension
+        // The blur region
+  
         let shape_available = conn
             .extension_information(shape::X11_EXTENSION_NAME)
             .ok()
             .flatten()
             .is_some();
 
-        // Initial input shape = full window (will be tightened on first resize)
         if shape_available {
             let full_rect = Rectangle {
                 x: 0,
@@ -213,6 +201,30 @@ impl DockWindow {
         )?;
         self.conn.flush()?;
         Ok(())
+    }
+
+    /// Tell KWin/picom which part of the window should have the desktop
+    /// blurred behind it. The renderer already blurs the wallpaper itself, so
+    /// this is only a hint for compositors that support the KDE protocol; the
+    /// rectangle must exclude the transparent zoom headroom above the pill.
+    pub fn set_blur_region(&self, x: i16, y: i16, width: u16, height: u16) {
+        let Some(blur_atom) = self.atoms.get("_KDE_NET_WM_BLUR_BEHIND_REGION") else {
+            return;
+        };
+        let region = [
+            x as u32,
+            y as u32,
+            width as u32,
+            height as u32,
+        ];
+        let _ = self.conn.change_property32(
+            PropMode::REPLACE,
+            self.window,
+            *blur_atom,
+            AtomEnum::CARDINAL,
+            &region,
+        );
+        let _ = self.conn.flush();
     }
 
     pub fn push_pixels(

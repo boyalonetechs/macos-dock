@@ -52,9 +52,8 @@ impl AppManager {
     }
 
     fn init_pinned_items(&mut self) {
-        // Fixed tail icons: separator + Downloads + Trash = 3
         let tail_count = 3usize;
-        let max_apps = MAX_DOCK_ICONS.saturating_sub(1 + tail_count); // 1 for launcher
+        let max_apps = MAX_DOCK_ICONS.saturating_sub(1 + tail_count);
 
         // All installed applications sorted alphabetically
         let mut app_indices: Vec<usize> = (0..self.entries.len()).collect();
@@ -199,12 +198,10 @@ impl AppManager {
                         item_type: DockItemType::RunningApp,
                         bouncing: false, bounce_phase: 0.0, bounce_offset: 0.0,
                     });
-                    // We'll update new_window_map index later after rebuilding self.icons
                 }
             }
         }
 
-        // Rebuild self.icons to preserve order: Pinned -> Sep -> Running -> Folder/Trash
         let mut new_icons = Vec::new();
         
         // 1. Pinned apps
@@ -214,7 +211,6 @@ impl AppManager {
             }
         }
         
-        // 2. Running apps (if any non-pinned)
         if !running_icons.is_empty() {
             new_icons.push(DockIcon {
                 name: String::new(),
@@ -232,7 +228,6 @@ impl AppManager {
             }
         }
 
-        // 3. Separator and Folder / Trash
         new_icons.push(DockIcon {
             name: String::new(),
             icon_name: String::new(),

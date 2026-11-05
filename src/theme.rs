@@ -22,7 +22,8 @@ pub struct MacTheme {
 
     pub active_dot_color: (f64, f64, f64, f64),
     pub max_zoom: f64,
-    pub sigma: f64,          // hint to compositor blur radius
+    pub sigma: f64,          // icon-magnification falloff width (not blur)
+    pub blur_sigma: f64,     // backdrop blur radius — lower = less blur
     pub separator_color: (f64, f64, f64, f64),
     pub separator_width: f64,
 }
@@ -57,7 +58,8 @@ impl MacTheme {
             active_dot_color: (1.0, 1.0, 1.0, 0.90),
 
             max_zoom: 1.32,
-            sigma: 22.0,   // pass to compositor as blur radius hint
+            sigma: 22.0,       // icon zoom falloff — keep this for magnification
+            blur_sigma: 22.0,  // backdrop glass blur — reduce for a crisper look
 
             separator_color: (1.0, 1.0, 1.0, 0.30),
             separator_width: 1.0,

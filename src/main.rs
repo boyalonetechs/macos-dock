@@ -1,5 +1,6 @@
 mod theme;
 mod renderer;
+mod backdrop;
 mod x11_window;
 mod app;
 mod desktop;
@@ -28,9 +29,6 @@ const HIDE_DELAY: Duration = Duration::from_secs(2);
 const TRIGGER_H: i32 = 6;
 const SLIDE_SPEED: f64 = 0.18;
 
-/// Headroom = transparent band above the pill where zoomed icons pop into.
-/// Icons grow bottom-anchored, lifting by (zoom-1)*icon_size*0.5,
-/// so headroom only needs to cover that upward lift.
 fn headroom(theme: &MacTheme) -> i32 {
     let extra = theme.icon_size as f64 * (theme.max_zoom - 1.0) * 0.5;
     extra.ceil() as i32
@@ -69,6 +67,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut manager = app::AppManager::new();
     let screen_h = dock.screen_h;
 
+    // Software backdrop blur: read + blur the desktop wallpaper once. This is
+    // what makes the glass effect visible on compositors (GNOME/Mutter, Xfwm,
+    // …) that ignore `_KDE_NET_WM_BLUR_BEHIND_REGION`.
+    let mut backdrop = backdrop::Backdrop::new(dock.screen_w, dock.screen_h, theme.blur_sigma);
+
     let grid_entries: Vec<desktop::DesktopEntry> = manager.all_entries().to_vec();
     let mut app_grid = AppGrid::new(
         &dock.conn,
@@ -102,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &dock.conn, dock.root, dock.visual, dock.depth, dock.colormap,
         dock.screen_w, dock.screen_h,
     )?;
-    menubar.render(&dock.conn, "Finder")?;
+    menubar.render(&dock.conn, "Finder", backdrop.surface())?;
     let mut last_menubar_render = Instant::now();
 
     let mut cc_popup = ControlCenterPopup::new(
@@ -118,11 +121,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Auto-hide state ────────────────────────────────────────────────────
     let mut last_activity = Instant::now();
-    let mut slide_offset: f64 = 0.0;   // 0.0 = fully visible, 1.0 = fully hidden
-    let mut dock_active = true;         // target: should the dock be visible?
-    let mut prev_fully_hidden = false;  // track state transitions
-    let mut dock_hidden_by_user = false; // user toggled "Hide Dock"
-    let mut menubar_hidden_by_user = false; // user toggled "Hide Menu Bar"
+    let mut slide_offset: f64 = 0.0;  
+    let mut dock_active = true;         
+    let mut prev_fully_hidden = false;  
+    let mut dock_hidden_by_user = false; 
+    let mut menubar_hidden_by_user = false; 
+
+    // Last configured window position, needed to line the blurred wallpaper up
+    // with the pill (the window slides vertically for auto-hide).
+    let mut dock_screen_x = 0i32;
+    let mut dock_screen_y = 0i32;
 
     loop {
         while let Some(event) = dock.next_event()? {
@@ -197,7 +205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => {}
                 }
                 if matches!(event, Event::Expose(ev) if ev.window == menubar.window) {
-                    let _ = menubar.render(&dock.conn, "Finder");
+                    let _ = menubar.render(&dock.conn, "Finder", backdrop.surface());
                     continue;
                 }
             }
@@ -415,8 +423,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let slide_distance = (hidden_y - visible_y) as f64;
             let actual_y = visible_y + (slide_offset * slide_distance) as i32;
 
+            dock_screen_x = dock_x as i32;
+            dock_screen_y = actual_y;
+
             if need_resize || dock_w != dock.width || full_h != dock.height as i32 {
                 dock.configure(dock_x, actual_y as i16, dock_w, full_h as u16)?;
+                dock.set_blur_region(0, zh as i16, dock_w, bg_h as u16);
                 dock.width = dock_w;
                 dock.height = full_h as u16;
                 need_redraw = true;
@@ -490,8 +502,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // ── Menu bar clock refresh ────────────────────────────────────────
         if !menubar_hidden_by_user && last_menubar_render.elapsed() > Duration::from_secs(1) {
-            let _ = menubar.render(&dock.conn, "Finder");
+            let _ = menubar.render(&dock.conn, "Finder", backdrop.surface());
             last_menubar_render = Instant::now();
+        }
+
+        // Switch from the opaque fallback to the blurred glass as soon as the
+        // background loader is done.
+        if backdrop.poll_ready() {
+            need_redraw = true;
+            if !menubar_hidden_by_user {
+                let _ = menubar.render(&dock.conn, "Finder", backdrop.surface());
+            }
         }
 
         // Only render when dock is at least partially visible
@@ -499,7 +520,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let zh = headroom(&theme);
             let fh = theme.dock_height() + zh;
             renderer.resize(dock.width as i32, fh, zh);
-            let (pixels, stride) = renderer.render(&theme, &mut manager);
+            let (pixels, stride) = renderer.render(
+                &theme,
+                &mut manager,
+                backdrop.surface(),
+                dock_screen_x,
+                dock_screen_y,
+            );
             let _ = dock.push_pixels(&pixels, dock.width, fh as u16, stride);
             need_redraw = false;
         } else if slide_offset >= 0.99 {

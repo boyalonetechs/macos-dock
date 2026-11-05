@@ -39,3 +39,28 @@ Install Rust and `cargo` via `rustup`:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs) | sh -s -- -y && source "$HOME/.cargo/env"
+```
+
+**Clone The Repo**
+
+- clone this repository from github
+
+```
+git clone https://github.com/boyalonetechs/macos-dock.git
+```
+
+**Install Cargo Dependence**
+
+- Install macos dependences and effects
+
+```
+cargo build
+```
+
+**Start the dock**
+
+- Use this command to start the macos lookalike tahoe dockr
+
+```
+cargo run
+```

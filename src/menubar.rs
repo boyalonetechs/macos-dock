@@ -86,8 +86,16 @@ impl MenuBar {
         let state2 = conn.intern_atom(false, b"_NET_WM_STATE")?.reply()?.atom;
         conn.change_property32(PropMode::REPLACE, win, state2, AtomEnum::ATOM, &[sticky, above, skip])?;
 
+        // Blur hint for KWin/picom (the bar has no transparent headroom, so
+        // the whole window is the correct region).
         let blur_atom = conn.intern_atom(false, b"_KDE_NET_WM_BLUR_BEHIND_REGION")?.reply()?.atom;
-        conn.change_property32(PropMode::REPLACE, win, blur_atom, AtomEnum::CARDINAL, &[])?;
+        conn.change_property32(
+            PropMode::REPLACE,
+            win,
+            blur_atom,
+            AtomEnum::CARDINAL,
+            &[0, 0, screen_w as u32, BAR_HEIGHT as u32],
+        )?;
 
         conn.map_window(win)?;
         conn.flush()?;
@@ -112,7 +120,12 @@ impl MenuBar {
         MenuBarAction::None
     }
 
-    pub fn render(&self, conn: &RustConnection, active_app_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn render(
+        &self,
+        conn: &RustConnection,
+        active_app_name: &str,
+        backdrop: Option<&ImageSurface>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let w = self.screen_w as i32;
         let h = BAR_HEIGHT as i32;
         let mut surface = ImageSurface::create(Format::ARgb32, w, h)
@@ -123,9 +136,23 @@ impl MenuBar {
         ctx.paint().ok();
         ctx.set_operator(cairo::Operator::Over);
 
-        // Near-transparent body — compositor blur fills the visual
+        // Blurred wallpaper behind the bar (the same backdrop the dock uses).
+        if let Some(backdrop) = backdrop {
+            ctx.rectangle(0.0, 0.0, w as f64, h as f64);
+            ctx.set_source_surface(backdrop, 0.0, 0.0).ok();
+            ctx.paint().ok();
+            ctx.set_source_rgba(0.02, 0.02, 0.04, 0.18);
+            ctx.paint().ok();
+        }
+
+        // Body tint. With a backdrop this stays nearly clear; without one it
+        // becomes opaque enough to remain readable.
         ctx.rectangle(0.0, 0.0, w as f64, h as f64);
-        ctx.set_source_rgba(0.08, 0.08, 0.10, 0.06);
+        if backdrop.is_some() {
+            ctx.set_source_rgba(0.08, 0.08, 0.10, 0.06);
+        } else {
+            ctx.set_source_rgba(0.10, 0.10, 0.12, 0.82);
+        }
         ctx.fill().ok();
 
         // Bottom border
@@ -213,7 +240,6 @@ impl MenuBar {
     }
 }
 
-// ── Control Center Popup ─────────────────────────────────────────
 
 const CC_W: i32 = 320;
 const CC_H: i32 = 340;
